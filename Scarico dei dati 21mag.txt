@@ -1,0 +1,227 @@
+# Borsa2_app/pages/1_Analisi_Tecnica.py
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Importa le funzioni dai moduli di utilità
+from utils.importazione_dati import load_tickers_from_csv, download_stock_data, get_ticker_list_for_selection, extract_symbol_from_selection
+
+# --- Configurazione della pagina Streamlit ---
+st.set_page_config(
+    page_title="Analisi Tecnica",
+    page_icon="📊",
+    layout="wide"
+)
+
+st.title("📊 Analisi Tecnica dei Titoli Azionari")
+st.markdown("Seleziona un titolo e un intervallo di date per visualizzare i dati storici.")
+
+# --- Caricamento dei ticker disponibili dal CSV ---
+tickers_file_path = "tickers.csv"
+available_tickers_display = get_ticker_list_for_selection(tickers_file_path)
+
+if not available_tickers_display:
+    st.error("Impossibile caricare i simboli dei titoli dal file 'tickers.csv'. Assicurati che il file esista e sia formattato correttamente.")
+    st.stop() # Ferma l'esecuzione se non ci sono ticker da selezionare
+
+# --- Sidebar per l'input utente ---
+st.sidebar.header("Impostazioni Titolo e Periodo")
+
+# Selezione del titolo azionario
+selected_ticker_display = st.sidebar.selectbox(
+    "Seleziona un titolo:",
+    options=available_tickers_display
+)
+
+# Estrai il simbolo effettivo dal display string
+selected_ticker_symbol = extract_symbol_from_selection(selected_ticker_display)
+
+# Selezione del periodo di date
+today = datetime.date.today()
+default_start_date = today - datetime.timedelta(days=365 * 2) # Due anni fa come default
+
+col1, col2 = st.sidebar.columns(2)
+start_date = col1.date_input("Data Inizio", value=default_start_date)
+end_date = col2.date_input("Data Fine", value=today)
+
+if start_date >= end_date:
+    st.sidebar.error("La data di inizio deve essere precedente alla data di fine.")
+    # Potresti voler disabilitare il pulsante o fermare l'esecuzione qui
+
+# --- Main execution ---
+if st.sidebar.button("Carica Dati"): # Cambiato il testo del pulsante
+    if selected_ticker_symbol and start_date < end_date:
+        st.info(f"Caricamento dati per {selected_ticker_symbol} dal {start_date} al {end_date}...")
+        
+        df_data = download_stock_data(selected_ticker_symbol, start_date, end_date)
+
+        if df_data is not None and not df_data.empty:
+            st.subheader(f"Dati Storici per {selected_ticker_symbol}")
+
+            # --- Gestione del MultiIndex e standardizzazione dei nomi delle colonne ---
+            # Appiattisci il MultiIndex se presente
+            if isinstance(df_data.columns, pd.MultiIndex):
+                # Se yfinance restituisce un MultiIndex per un singolo ticker,
+                # il primo livello (indice 0) contiene i nomi delle colonne (Open, High, Close, etc.)
+                # e il secondo livello (indice 1) contiene il simbolo del ticker.
+                # Prendiamo il primo livello per i nomi delle colonne.
+                df_data.columns = df_data.columns.get_level_values(0)
+            
+            # Standardizza i nomi delle colonne: converti in maiuscolo e rimuovi spazi
+            df_data.columns = [col.upper().replace(' ', '') for col in df_data.columns]
+
+            # Rinomina 'ADJCLOSE' in 'CLOSE' se presente
+            if 'ADJCLOSE' in df_data.columns and 'CLOSE' not in df_data.columns:
+                df_data.rename(columns={'ADJCLOSE': 'CLOSE'}, inplace=True)
+            
+            # Assicurati che tutte le colonne necessarie esistano dopo la standardizzazione
+            required_cols_upper = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
+            missing_cols = [col for col in required_cols_upper if col not in df_data.columns]
+            if missing_cols:
+                st.error(f"Dati mancanti: le seguenti colonne necessarie non sono state trovate nel DataFrame dopo la standardizzazione: {', '.join(missing_cols)}. Colonne disponibili: {', '.join(df_data.columns)}")
+                st.stop() # Ferma l'esecuzione se mancano colonne critiche
+
+            # --- Tabella Dati ---
+            st.write("### Dati Grezzi")
+            # Mostra solo le colonne OHLCV (usando i nomi standardizzati in maiuscolo)
+            cols_to_display = required_cols_upper # Ora usiamo i nomi in maiuscolo
+            
+            # Crea una copia del DataFrame per la visualizzazione e modifica l'indice
+            df_display_table = df_data[cols_to_display].tail(100).copy()
+            # Formatta l'indice per mostrare solo la data (senza l'ora 00:00:00)
+            df_display_table.index = df_display_table.index.strftime('%Y-%m-%d')
+            
+            st.dataframe(df_display_table.style.format("{:.2f}")) # Mostra le ultime 100 righe, formatta a 2 decimali
+
+            # --- Plot dei Prezzi e Volume ---
+            # Crea i subplots (una riga per i prezzi, una per il volume)
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.1,
+                                row_heights=[0.7, 0.3]) # 70% per i prezzi, 30% per il volume
+
+            # Candele OHLC (usando i nomi standardizzati in maiuscolo)
+            fig.add_trace(go.Candlestick(x=df_data.index,
+                                        open=df_data['OPEN'],
+                                        high=df_data['HIGH'],
+                                        low=df_data['LOW'],
+                                        close=df_data['CLOSE'],
+                                        name='Prezzo'), row=1, col=1)
+
+            # Volumi (usando i nomi standardizzati in maiuscolo)
+            fig.add_trace(go.Bar(x=df_data.index, y=df_data['VOLUME'],
+                                name='Volume', marker_color='rgba(128, 128, 128, 0.5)'), row=2, col=1)
+
+            # --- Layout del Grafico Generale ---
+            fig.update_layout(
+                title_text=f'Prezzi e Volumi per {selected_ticker_symbol}',
+                xaxis_rangeslider_visible=False, # Nasconde il range slider sotto il grafico
+                height=600, # Altezza fissa per questo layout semplificato
+                margin=dict(t=50, b=0, l=0, r=0), # Riduci i margini
+                hovermode="x unified" # Mostra i tooltip per tutti i tracciati alla stessa data
+            )
+            fig.update_xaxes(showgrid=True, zeroline=False) # Migliora la griglia
+            fig.update_yaxes(showgrid=True, zeroline=False)
+
+            # Aggiorna gli assi Y per i prezzi e il volume
+            fig.update_yaxes(title_text="Prezzo", row=1, col=1)
+            fig.update_yaxes(title_text="Volume", row=2, col=1)
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("Selezione e Visualizzazione Indicatori Tecnici")
+            st.info("Questa sezione verrà ampliata in seguito per permettere la selezione e il calcolo degli indicatori.")
+
+        else:
+            st.warning(f"Nessun dato disponibile per {selected_ticker_symbol} nel periodo selezionato.")
+    else:
+        st.warning("Seleziona un simbolo azionario valido e un intervallo di date corretto.")
+
+-----------------------------------------------------------------------------------------------------------------
+# Borsa2_app/utils/importazione_dati.py
+
+import pandas as pd
+import yfinance as yf
+import datetime
+import streamlit as st # Useremo st.cache_data per ottimizzare
+
+def load_tickers_from_csv(file_path="tickers.csv"):
+    """
+    Carica i simboli dei ticker e i nomi delle aziende da un file CSV.
+    Il CSV dovrebbe avere le colonne 'Symbol' e 'Company'.
+    Ritorna un DataFrame con i ticker e i nomi, o None in caso di errore.
+    """
+    try:
+        # Assumiamo che il file tickers.csv sia nella root del progetto (Borsa2_app)
+        df_tickers = pd.read_csv(file_path)
+        if 'Symbol' not in df_tickers.columns:
+            st.error(f"Il file '{file_path}' deve contenere una colonna 'Symbol'.")
+            return None
+        return df_tickers
+    except FileNotFoundError:
+        st.error(f"Errore: Il file '{file_path}' non è stato trovato nella directory principale del progetto.")
+        return None
+    except Exception as e:
+        st.error(f"Errore durante la lettura del file '{file_path}': {e}")
+        return None
+
+@st.cache_data(ttl=3600) # Memorizza in cache i dati per 1 ora (3600 secondi)
+def download_stock_data(ticker_symbol: str, start_date: datetime.date, end_date: datetime.date):
+    """
+    Scarica i dati storici di un singolo titolo azionario utilizzando yfinance.
+    I dati vengono memorizzati in cache per velocizzare le richieste ripetute.
+
+    Args:
+        ticker_symbol (str): Il simbolo del titolo azionario (es. 'AAPL').
+        start_date (datetime.date): La data di inizio per i dati.
+        end_date (datetime.date): La data di fine per i dati.
+
+    Returns:
+        pd.DataFrame: Un DataFrame di Pandas con i dati OHLCV, o None in caso di errore.
+    """
+    if not isinstance(ticker_symbol, str) or not ticker_symbol:
+        st.warning("Simbolo del titolo non valido fornito per il download.")
+        return None
+    if not isinstance(start_date, datetime.date) or not isinstance(end_date, datetime.date):
+        st.warning("Date non valide fornite per il download.")
+        return None
+    if start_date >= end_date:
+        st.warning("La data di inizio deve essere precedente alla data di fine.")
+        return None
+
+    try:
+        data = yf.download(ticker_symbol, start=start_date, end=end_date)
+        if data.empty:
+            st.warning(f"Nessun dato trovato per il simbolo: {ticker_symbol} nel periodo specificato ({start_date} a {end_date}).")
+            return None
+        return data
+    except Exception as e:
+        st.error(f"Errore durante il download dei dati per {ticker_symbol} da Yahoo Finance: {e}")
+        return None
+
+# Funzione per ottenere la lista dei simboli e nomi per la selezione in Streamlit
+def get_ticker_list_for_selection(file_path="tickers.csv"):
+    """
+    Prepara una lista di stringhe formattate "Symbol - Company Name" per la selezione utente.
+    """
+    df_tickers = load_tickers_from_csv(file_path)
+    if df_tickers is not None and not df_tickers.empty:
+        # Combina Symbol e Company per una visualizzazione più chiara nel selectbox
+        df_tickers['Display'] = df_tickers['Symbol'] + ' - ' + df_tickers['Company']
+        return df_tickers['Display'].tolist()
+    return []
+
+def extract_symbol_from_selection(selected_string: str):
+    """
+    Estrae il simbolo del ticker da una stringa formattata "Symbol - Company Name".
+    """
+    if selected_string and ' - ' in selected_string:
+        return selected_string.split(' - ')[0].strip()
+    return selected_string.strip() # Ritorna la stringa così com'è se il formato non corrisponde
+
+-----------------------------------------------------------------------------------------------------------------------
+

@@ -1,0 +1,114 @@
+Symbol,Company
+AAPL,Apple Inc.
+MSFT,Microsoft Corporation
+GOOGL,Alphabet Inc.
+AMZN,Amazon.com Inc.
+META,Meta Platforms Inc.
+TSLA,Tesla Inc.
+NVDA,NVIDIA Corporation
+JPM,JPMorgan Chase & Co.
+V,Visa Inc.
+JNJ,Johnson & Johnson
+WMT,Walmart Inc.
+PG,Procter & Gamble Co.
+MA,Mastercard Inc.
+UNH,UnitedHealth Group Inc.
+HD,Home Depot Inc.
+BAC,Bank of America Corp.
+XOM,Exxon Mobil Corporation
+INTC,Intel Corporation
+VZ,Verizon Communications Inc.
+DIS,The Walt Disney Company
+BMED.MI,Banca Mediolanum
+BPE.MI,BPER Banca S.p.A.
+CIR.MI,Cir
+ENEL.MI,Enel S.p.A.
+ENI.MI,Eni S.p.A.
+FCT.MI,Fincantieri
+G.IT,Assicurazioni Generali S.p.A.
+HER.MI,Hera
+ISP.MI,Intesa Sanpaolo
+LDO.MI,Leonardo
+LTMC.MI,Lottomatica GR
+MARR.MI,Marr
+PIRC.MI,Pirelli & C.
+REC.MI,Recordati
+SES.MI,Sesa
+SPM.MI,Saipem S.p.A.
+TIT.MI,Telecom Italia
+UCG.MI,UniCredit S.p.A.
+UNI.MI,Unipol
+LBUL.MI,WisdomTree Gold 2x Daily Leveraged
+LCFE.MI,WisdomTree Coffee 2x Daily Leveraged
+LCOC.MI,WisdomTree Cocoa 2x Daily Leveraged
+LNGA.MI,WisdomTree Natural Gas 2x Daily Leveraged
+LNIK.MI,WisdomTree Nickel 2x Daily Leveraged
+LOIL.MI,WisdomTree WTI Crude Oil 2x Daily Leveraged
+LPAL.MI,WisdomTree Palladium 2x Daily Leveraged
+LPET.MI,WisdomTree Petroleum 2x Daily Leveraged
+LPLA.MI,WisdomTree Platinum 2x Daily Leveraged
+LSIL.MI,WisdomTree Silver 2x Daily Leveraged
+LSUG.MI,WisdomTree Sugar 2x Daily Leveraged
+LWEA.MI,WisdomTree Wheat 2x Daily Leveraged
+QQQ3.MI,WisdomTree NASDAQ 100 3x Daily Leveraged
+QQQS.MI,WisdomTree NASDAQ 100 3x Daily Short
+3BAL.MI,WisdomTree EURO STOXX Banks 3x Daily Leveraged
+3BAS.MI,WisdomTree EURO STOXX Banks 3x Daily Short
+3BRL.MI,WisdomTree Brent Crude Oil 3x Daily Leveraged
+3BRS.MI,WisdomTree Brent Crude Oil 3x Daily Short
+3BTL.MI,WisdomTree BTP 10Y 3x Daily Leveraged
+3BTS.MI,WisdomTree BTP 10Y 3x Daily Short
+3BUL.MI,WisdomTree Bund 10Y 3x Daily Leveraged
+3BUS.MI,WisdomTree Bund 10Y 3x Daily Short
+3DEL.MI,WisdomTree DAX 30 3x Daily Leveraged
+3DES.MI,WisdomTree DAX 30 3x Daily Short
+3EML.MI,WisdomTree Emerging Markets 3x Daily Leveraged
+3EMS.MI,WisdomTree Emerging Markets 3x Daily Short
+3EUL.MI,WisdomTree EURO STOXX 50 3x Daily Leveraged
+3EUS.MI,WisdomTree EURO STOXX 50 3x Daily Short
+3GOL.MI,WisdomTree Gold 3x Daily Leveraged
+3GOS.MI,WisdomTree Gold 3x Daily Short
+3HCL.MI,WisdomTree Copper 3x Daily Leveraged
+3HCS.MI,WisdomTree Copper 3x Daily Short
+3ITL.MI,WisdomTree FTSE MIB 3x Daily Leveraged
+3ITS.MI,WisdomTree FTSE MIB 3x Daily Short
+3LAA.MI,GraniteShares 3x Long Alibaba Daily ETP
+3LAL.MI,GraniteShares 3x Long Alphabet Daily ETP
+3LAM.MI,GraniteShares 3x Long AMD Daily ETP
+3LAP.MI,GraniteShares 3x Long Apple Daily ETP
+3LCR.MI,GraniteShares 3x Long UniCredit Daily ETP
+3LEN.MI,GraniteShares 3x Long Eni Daily ETP
+3LFB.MI,GraniteShares 3x Long Facebook Daily ETP
+3LMS.MI,GraniteShares 3x Long Microsoft Daily ETP
+3LNF.MI,GraniteShares 3x Long Netflix Daily ETP
+3LNL.MI,GraniteShares 3x Long Enel Daily ETP
+3LNV.MI,GraniteShares 3x Long NVIDIA Daily ETP
+3LPO.MI,GraniteShares 3x Long Spotify Daily ETP
+3LSP.MI,GraniteShares 3x Long Intesa Sanpaolo Daily ETP
+3LTS.MI,GraniteShares 3x Long Tesla Daily ETP
+3LZN.MI,GraniteShares 3x Long Amazon Daily ETP
+3NGL.MI,WisdomTree Natural Gas 3x Daily Leveraged
+3NGS.MI,WisdomTree Natural Gas 3x Daily Short
+3OIL.MI,WisdomTree WTI Crude Oil 3x Daily Leveraged
+3OIS.MI,WisdomTree WTI Crude Oil 3x Daily Short
+3SAA.MI,GraniteShares 3x Short Alibaba Daily ETP
+3SAL.MI,GraniteShares 3x Short Alphabet Daily ETP
+3SAM.MI,GraniteShares 3x Short AMD Daily ETP
+3SAP.MI,GraniteShares 3x Short Apple Daily ETP
+3SCR.MI,GraniteShares 3x Short UniCredit Daily ETP
+3SEN.MI,GraniteShares 3x Short Eni Daily ETP
+3SFB.MI,GraniteShares 3x Short Facebook Daily ETP
+3SIL.MI,WisdomTree Silver 3x Daily Leveraged
+3SIS.MI,WisdomTree Silver 3x Daily Short
+3SMS.MI,GraniteShares 3x Short Microsoft Daily ETP
+3SNF.MI,GraniteShares 3x Short Netflix Daily ETP
+3SNL.MI,GraniteShares 3x Short Enel Daily ETP
+3SNV.MI,GraniteShares 3x Short NVIDIA Daily ETP
+3SPO.MI,GraniteShares 3x Short Spotify Daily ETP
+3SSP.MI,GraniteShares 3x Short Intesa Sanpaolo Daily ETP
+3STS.MI,GraniteShares 3x Short Tesla Daily ETP
+3SZN.MI,GraniteShares 3x Short Amazon Daily ETP
+3TYL.MI,WisdomTree US Treasuries 10Y 3x Daily Leveraged
+3TYS.MI,WisdomTree US Treasuries 10Y 3x Daily Short
+3USL.MI,WisdomTree S&P 500 3x Daily Leveraged
+3USS.MI,WisdomTree S&P 500 3x Daily Short

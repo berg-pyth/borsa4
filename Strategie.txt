@@ -1,0 +1,2424 @@
+# Borsa2_app/pages/2_Testa_Strategie.py
+
+import streamlit as st
+import pandas as pd
+import datetime
+
+# IMPORTAZIONI DALLE UTILITIES
+from utils.strategies_config import STRATEGIE_DISPONIBILI, NOMI_STRATEGIE
+# MODIFICATO QUI: NON importare extract_symbol_from_selection da importazione_dati
+from utils.importazione_dati import download_stock_data, get_ticker_list_for_selection
+from utils.backtesting_engine import run_backtest
+from utils.plotting_utils import plot_backtest_results
+
+# --- NUOVA FUNZIONE HELPER LOCALE ---
+# Questa funzione è qui per gestire il formato specifico del simbolo in questa pagina
+def extract_symbol_from_display_string(selected_string: str) -> str:
+    """
+    Estrae il simbolo puro (es. 'AAPL') da una stringa display (es. 'AAPL - Apple Inc.').
+    """
+    if selected_string and ' - ' in selected_string:
+        return selected_string.split(' - ')[0].strip()
+    return selected_string.strip() # Ritorna la stringa così com'è se non contiene il separatore
+
+# --- FINE NUOVA FUNZIONE HELPER ---
+
+
+st.title("📊 Testa Strategie di Trading")
+st.markdown("Seleziona un titolo, un periodo e una strategia per eseguire un backtest.")
+
+# --- SEZIONE PER LA SCELTA DEL TITOLO E DEL PERIODO ---
+st.sidebar.header("Configurazione Test")
+
+ticker_options = get_ticker_list_for_selection()
+
+if not ticker_options:
+    st.sidebar.error("Impossibile caricare i simboli dei titoli. Controlla il file 'tickers.csv' e il log di Streamlit.")
+    st.stop()
+
+selected_ticker_display = st.sidebar.selectbox(
+    "Seleziona un Titolo:",
+    ticker_options,
+    index=0
+)
+
+# --- APPLLICA LA NUOVA FUNZIONE LOCALE PER ESTRARRE IL SIMBOLO PURO ---
+simbolo_titolo = extract_symbol_from_display_string(selected_ticker_display)
+
+if not simbolo_titolo:
+    st.sidebar.warning("Nessun simbolo del titolo valido selezionato o estratto. Verifica la selezione.")
+    st.stop()
+
+# Selezione del periodo di test
+st.sidebar.subheader("Periodo Storico")
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    data_inizio = st.date_input("Data Inizio", datetime.date(2023, 1, 1))
+with col2:
+    data_fine = st.date_input("Data Fine", datetime.date.today())
+
+if data_inizio >= data_fine:
+    st.sidebar.error("La data di inizio deve essere precedente alla data di fine.")
+    st.stop()
+
+# --- CARICAMENTO DATI ---
+df_data = pd.DataFrame() # Inizializza df_data come DataFrame vuoto per evitare NoneType
+# Button per caricare i dati
+if st.sidebar.button("Carica Dati"):
+    with st.spinner(f"Caricamento dati per {simbolo_titolo} dal {data_inizio} al {data_fine}..."):
+        # DEBUG: Mostra il simbolo effettivo che viene passato a yfinance
+        st.info(f"Caricamento dati per: **{simbolo_titolo}**")
+
+        try:
+            # Qui download_stock_data riceverà il simbolo puro (es. "AAPL")
+            df_data = download_stock_data(simbolo_titolo, data_inizio, data_fine)
+
+            if df_data.empty:
+                st.warning(f"Nessun dato trovato per {simbolo_titolo} nel periodo selezionato o errore nel download.")
+            else:
+                st.sidebar.success(f"Dati caricati per {len(df_data)} candele.")
+
+        except Exception as e:
+            st.sidebar.error(f"Errore durante il caricamento dei dati: {e}")
+            st.exception(e)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# --- SEZIONE PER IL BACKTEST DELLA STRATEGIA ---
+# Questo blocco verrà eseguito solo se df_data non è vuoto
+if not df_data.empty: # Controlla che il DataFrame non sia vuoto
+    st.sidebar.header("Selezione Strategia")
+    # ... (il resto del codice per la selezione e l'esecuzione del backtest) ...
+    # Assicurati che tutti gli usi di df_data qui siano preceduti da un controllo df_data.empty
+else:
+    st.info("Carica i dati storici dal pannello laterale per iniziare a testare le strategie.")
+
+
+# --- SEZIONE SELEZIONE STRATEGIA E PARAMETRI ---
+if df_data is not None: # Mostra la UI della strategia solo se i dati sono stati caricati
+    st.sidebar.header("Selezione Strategia")
+    selected_strategy_name = st.sidebar.selectbox(
+        "Scegli una Strategia:",
+        NOMI_STRATEGIE,
+        index=0 # Seleziona la prima strategia di default
+    )
+
+    selected_strategy_info = STRATEGIE_DISPONIBILI[selected_strategy_name]
+    strategy_function = selected_strategy_info['function']
+    strategy_parameters_config = selected_strategy_info.get('parameters', {}) # Usa .get per sicurezza
+
+    st.sidebar.write(f"Descrizione: {selected_strategy_info['description']}")
+
+    st.sidebar.subheader("Parametri Strategia")
+    strategy_params_input = {}
+    for param_name, param_details in strategy_parameters_config.items():
+        label = param_details.get('label', param_name.replace('_', ' ').title()) # Nome pulito per la UI
+        if param_details['type'] == 'int':
+            strategy_params_input[param_name] = st.sidebar.slider(
+                label,
+                min_value=param_details['min_value'],
+                max_value=param_details['max_value'],
+                value=param_details['default'],
+                step=param_details['step'],
+                key=f"{selected_strategy_name}_{param_name}" # Chiave unica per lo slider
+            )
+        elif param_details['type'] == 'float':
+            strategy_params_input[param_name] = st.sidebar.slider(
+                label,
+                min_value=float(param_details['min_value']),
+                max_value=float(param_details['max_value']),
+                value=float(param_details['default']),
+                step=float(param_details['step']),
+                key=f"{selected_strategy_name}_{param_name}"
+            )
+        # Puoi aggiungere altri tipi di input (es. st.checkbox, st.text_input) qui
+
+
+    # --- ESECUZIONE DEL BACKTEST ---
+    if st.sidebar.button("Esegui Backtest Strategia", key="run_backtest_btn"):
+        if df_data is not None and not df_data.empty:
+            with st.spinner("Esecuzione Backtest..."):
+                try:
+                    # Chiamata alla funzione della strategia per generare i segnali
+                    # Passiamo una copia del DataFrame per non modificare l'originale
+                    df_with_signals = strategy_function(df_data.copy(), **strategy_params_input)
+
+                    # Chiamata al backtesting_engine per calcolare le metriche di performance
+                    # run_backtest dovrebbe prendere il df con i segnali e restituire le metriche
+                    # e forse un DataFrame arricchito con PnL, Drawdown, ecc.
+                    backtest_results, df_final = run_backtest(df_with_signals.copy(),
+                                                                initial_capital=10000, # Esempio
+                                                                commission=0.001) # Esempio 0.1%
+
+                    st.success("Backtest Completato!")
+
+
+
+
+
+
+
+
+
+
+
+                    # --- PLOT DEL GRAFICO ---
+                    st.subheader(f"📈 Grafico Prezzo e Segnali per {simbolo_titolo}")
+                    # Assumi che plot_candlestick_with_signals prenda il df_final e le colonne dei segnali
+                    fig = plot_backtest_results(
+                        df_final,
+                        strategy_name=selected_strategy_name,
+                        show_volume=True # Puoi aggiungere opzioni
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # --- METRICHE DEL BACKTEST ---
+                    st.subheader("📊 Risultati del Backtest")
+                    # Qui puoi visualizzare le metriche chiave restituite da run_backtest
+                    col_metrics_1, col_metrics_2, col_metrics_3 = st.columns(3)
+                    with col_metrics_1:
+                        st.metric("Profitto Netto", f"{backtest_results.get('net_profit', 0):.2f} €")
+                        st.metric("Trades Totali", f"{backtest_results.get('total_trades', 0)}")
+                    with col_metrics_2:
+                        st.metric("Drawdown Max", f"{backtest_results.get('max_drawdown', 0):.2f}%")
+                        st.metric("Percentuale Vincenti", f"{backtest_results.get('winning_percentage', 0):.2f}%")
+                    with col_metrics_3:
+                        st.metric("Guadagno Medio/Trade", f"{backtest_results.get('avg_profit_per_trade', 0):.2f} €")
+                        st.metric("Fattore di Profitto", f"{backtest_results.get('profit_factor', 0):.2f}")
+
+                    # --- TABELLA DETTAGLIATA ---
+                    st.subheader("📋 Dettaglio Prezzo e Segnali")
+                    # Visualizza le ultime N righe o tutte le righe con i segnali e la posizione
+                    st.dataframe(df_final[[
+                        'open', 'high', 'low', 'close',
+                        'long_entry', 'long_exit', 'short_entry', 'short_exit',
+                        'position', # Aggiungi altre colonne rilevanti calcolate dal backtester
+                        # 'PnL_daily', 'cumulative_PnL' # Esempio di colonne dal backtest engine
+                    ]].tail(50)) # Mostra le ultime 50 righe
+
+                except Exception as e:
+                    st.error(f"Errore durante l'esecuzione del backtest: {e}")
+                    st.exception(e) # Mostra l'intera traceback per debug
+
+        else:
+            st.warning("Per favore, carica i dati storici prima di eseguire il backtest.")
+else:
+    st.info("Carica i dati storici dal pannello laterale per iniziare a testare le strategie.")
+
+
+----------------------------------------------------------------------------------------------------------------------------------------
+
+# Borsa2_app/utils/strategies_config.py
+
+from .logica_strategie import cci_sma
+from .logica_strategie import incrocio_sma
+from .logica_strategie import livelli_bollinger
+from .logica_strategie import livelli_stocastico
+
+STRATEGIE_DISPONIBILI = {
+    "CCI-SMA": {
+        "function": cci_sma.apply_strategy, # <-- MODIFICATO QUI
+        "description": "Strategia basata su incroci CCI e relazione prezzo/SMA.",
+        "parameters": {
+            "cci_length": {"type": "int", "default": 14, "min_value": 5, "max_value": 30, "step": 1, "label": "Lunghezza CCI"},
+            "sma_length": {"type": "int", "default": 20, "min_value": 10, "max_value": 50, "step": 5, "label": "Lunghezza SMA"}
+        }
+    },
+    "Incrocio Medie Mobili": {
+        "function": incrocio_sma.apply_strategy, # <-- MODIFICATO QUI
+        "description": "Strategia basata sull'incrocio di due medie mobili semplici.",
+        "parameters": {
+            "short_sma_length": {"type": "int", "default": 10, "min_value": 5, "max_value": 30, "step": 1, "label": "SMA Veloce"},
+            "long_sma_length": {"type": "int", "default": 50, "min_value": 20, "max_value": 100, "step": 5, "label": "SMA Lenta"}
+        }
+    },
+    "Livelli Bollinger Bands": {
+        "function": livelli_bollinger.apply_strategy, # <-- MODIFICATO QUI
+        "description": "Strategia basata sul superamento delle bande di Bollinger.",
+        "parameters": {
+            "bollinger_length": {"type": "int", "default": 20, "min_value": 10, "max_value": 50, "step": 1, "label": "Lunghezza Bollinger"},
+            "bollinger_std_dev": {"type": "float", "default": 2.0, "min_value": 1.0, "max_value": 3.0, "step": 0.1, "label": "Deviazione Std."}
+        }
+    },
+    "Livelli Stocastico": {
+        "function": livelli_stocastico.apply_strategy, # <-- MODIFICATO QUI
+        "description": "Strategia basata sui livelli di ipercomprato/ipervenduto dello Stocastico.",
+        "parameters": {
+            "k_period": {"type": "int", "default": 14, "min_value": 5, "max_value": 30, "step": 1, "label": "Periodo %K"},
+            "d_period": {"type": "int", "default": 3, "min_value": 1, "max_value": 10, "step": 1, "label": "Periodo %D"},
+            "overbought_level": {"type": "int", "default": 80, "min_value": 70, "max_value": 90, "step": 5, "label": "Livello Ipercomprato"},
+            "oversold_level": {"type": "int", "default": 20, "min_value": 10, "max_value": 30, "step": 5, "label": "Livello Ipervenduto"}
+        }
+    }
+}
+
+NOMI_STRATEGIE = list(STRATEGIE_DISPONIBILI.keys())
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+# Borsa2_app/utils/importazione_dati.py
+
+import pandas as pd
+import yfinance as yf
+import datetime
+import streamlit as st # Useremo st.cache_data per ottimizzare
+
+def load_tickers_from_csv(file_path="tickers.csv"):
+    """
+    Carica i simboli dei ticker e i nomi delle aziende da un file CSV.
+    Il CSV dovrebbe avere le colonne 'Symbol' e 'Company'.
+    Ritorna un DataFrame con i ticker e i nomi, o None in caso di errore.
+    """
+    try:
+        # Assumiamo che il file tickers.csv sia nella root del progetto (Borsa2_app)
+        df_tickers = pd.read_csv(file_path)
+        if 'Symbol' not in df_tickers.columns:
+            st.error(f"Il file '{file_path}' deve contenere una colonna 'Symbol'.")
+            return None
+        return df_tickers
+    except FileNotFoundError:
+        st.error(f"Errore: Il file '{file_path}' non è stato trovato nella directory principale del progetto.")
+        return None
+    except Exception as e:
+        st.error(f"Errore durante la lettura del file '{file_path}': {e}")
+        return None
+
+@st.cache_data(ttl=3600) # Memorizza in cache i dati per 1 ora (3600 secondi)
+def download_stock_data(ticker_symbol: str, start_date: datetime.date, end_date: datetime.date):
+    """
+    Scarica i dati storici di un singolo titolo azionario utilizzando yfinance.
+    I dati vengono memorizzati in cache per velocizzare le richieste ripetute.
+
+    Args:
+        ticker_symbol (str): Il simbolo del titolo azionario (es. 'AAPL').
+        start_date (datetime.date): La data di inizio per i dati.
+        end_date (datetime.date): La data di fine per i dati.
+
+    Returns:
+        pd.DataFrame: Un DataFrame di Pandas con i dati OHLCV, o None in caso di errore.
+    """
+    if not isinstance(ticker_symbol, str) or not ticker_symbol:
+        st.warning("Simbolo del titolo non valido fornito per il download.")
+        return None
+    if not isinstance(start_date, datetime.date) or not isinstance(end_date, datetime.date):
+        st.warning("Date non valide fornite per il download.")
+        return None
+    if start_date >= end_date:
+        st.warning("La data di inizio deve essere precedente alla data di fine.")
+        return None
+
+    try:
+        data = yf.download(ticker_symbol, start=start_date, end=end_date)
+        if data.empty:
+            st.warning(f"Nessun dato trovato per il simbolo: {ticker_symbol} nel periodo specificato ({start_date} a {end_date}).")
+            return None
+        return data
+    except Exception as e:
+        st.error(f"Errore durante il download dei dati per {ticker_symbol} da Yahoo Finance: {e}")
+        return None
+
+# Funzione per ottenere la lista dei simboli e nomi per la selezione in Streamlit
+def get_ticker_list_for_selection(file_path="tickers.csv"):
+    """
+    Prepara una lista di stringhe formattate "Symbol - Company Name" per la selezione utente.
+    """
+    df_tickers = load_tickers_from_csv(file_path)
+    if df_tickers is not None and not df_tickers.empty:
+        # Combina Symbol e Company per una visualizzazione più chiara nel selectbox
+        df_tickers['Display'] = df_tickers['Symbol'] + ' - ' + df_tickers['Company']
+        return df_tickers['Display'].tolist()
+    return []
+
+def extract_symbol_from_selection(selected_string: str):
+    """
+    Estrae il simbolo del ticker da una stringa formattata "Symbol - Company Name".
+    """
+    if selected_string and ' - ' in selected_string:
+        return selected_string.split(' - ')[0].strip()
+    return selected_string.strip() # Ritorna la stringa così com'è se il formato non corrisponde
+
+
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+# backtesting engine
+
+import pandas as pd
+import numpy as np
+from pandas import Timestamp
+from datetime import date
+import datetime # Importa il modulo datetime per Timedelta
+
+def run_backtest(
+    dati: pd.DataFrame, # DataFrame con dati OHLCV, Indicatori, e colonna 'Signal'
+    capitale_iniziale: float,
+    commissione_percentuale: float,
+    abilita_short: bool,
+    stop_loss_percent: float = None, # None se non abilitato
+    take_profit_percent: float = None, # None se non abilitato
+    trailing_stop_percent: float = None, # None se non abilitato
+    # Puoi aggiungere altri parametri qui se necessario in futuro (es. slippage)
+) -> tuple[list, pd.Series, pd.Series, dict]: # <-- Aggiunto pd.Series per Buy&Hold equity
+    """
+    Esegue il backtest di una strategia di trading sui dati forniti.
+
+    Args:
+        dati (pd.DataFrame): DataFrame con dati storici (OHLCV) e colonna 'Signal' generata dalla strategia.
+        capitale_iniziale (float): Capitale iniziale per il backtest.
+        commissione_percentuale (float): Percentuale di commissione per operazione (ingresso e uscita).
+        abilita_short (bool): Se true, le posizioni Short sono permesse.
+        stop_loss_percent (float, optional): Percentuale di Stop Loss rispetto al prezzo di ingresso.
+        take_profit_percent (float, optional): Percentuale di Take Profit rispetto al prezzo di ingresso.
+        trailing_stop_percent (float, optional): Percentuale di Trailing Stop rispetto al massimo/minimo favorevole.
+
+    Returns:
+        tuple[list, pd.Series, pd.Series, dict]: Una tupla contenente:
+            - lista_dei_trade (list): Elenco dei trade eseguiti (dizionari con dettagli).
+            - equity_curve (pd.Series): Andamento del capitale della strategia nel tempo (include P/L non realizzata).
+            - buy_hold_curve (pd.Series): Andamento normalizzato del titolo (Buy&Hold) nel tempo.
+            - metriche_risultati (dict): Dizionario con le metriche di performance.
+    """
+
+    # --- Validazione Dati e Parametri ---
+    if dati is None or dati.empty:
+        print("Errore backtest: DataFrame dati è vuoto o None.")
+        return [], pd.Series(dtype=float), pd.Series(dtype=float), {}
+
+    required_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Signal']
+    if not all(col in dati.columns for col in required_cols):
+        missing = [col for col in required_cols if col not in dati.columns]
+        print(f"Errore backtest: DataFrame dati non contiene le colonne necessarie: {missing}.")
+        return [], pd.Series(dtype=float), pd.Series(dtype=float), {}
+
+    if capitale_iniziale <= 0:
+         print("Errore backtest: Capitale iniziale deve essere maggiore di zero.")
+         return [], pd.Series(dtype=float), pd.Series(dtype=float), {}
+
+    # Commissione deve essere positiva o zero
+    commissione_percentuale = max(0.0, commissione_percentuale)
+
+
+    # --- Inizializzazione Stato Backtest ---
+    equity = capitale_iniziale # Equity realizzata (somma P/L trade chiusi + capitale iniziale)
+    position = 'Flat' # 'Flat', 'Long', 'Short'
+    units = 0 # Numero di quote in posizione corrente
+    entry_price = 0.0 # Prezzo di ingresso della posizione corrente
+    entry_date: Timestamp | None = None # Data di ingresso della posizione corrente
+
+    list_of_trades = [] # Lista per memorizzare i trade chiusi
+    equity_history = [] # Lista per memorizzare l'andamento del capitale TOTALE (realizzata + non realizzata) giorno per giorno
+    equity_history_dates = [] # Lista per memorizzare le date corrispondenti all'equity_history
+
+    # Per il calcolo del Trailing Stop
+    peak_price_since_entry = None # Prezzo massimo raggiunto in posizione Long dall'ingresso
+    lowest_price_since_entry = None # Prezzo minimo raggiunto in posizione Short dall'ingresso
+
+    # Per il calcolo del Drawdown
+    peak_equity_overall = capitale_iniziale # Capitale massimo raggiunto in assoluto fino a quel punto
+    max_drawdown_currency = 0.0 # Massimo drawdown in valuta (differenza picco - valle)
+    max_drawdown_percent = 0.0 # Massimo drawdown in percentuale (rispetto al picco)
+
+
+    # Trova l'indice di inizio per il backtest (dopo che gli indicatori hanno valori validi)
+    first_valid_idx_loc = dati['Signal'].first_valid_index() # Ottiene l'indice effettivo (es. Timestamp)
+    if first_valid_idx_loc is None:
+        print("Avviso backtest: Nessun segnale valido trovato nel DataFrame.")
+        # Ritorna risultati iniziali se non ci sono segnali validi
+        equity_history.append(equity)
+        equity_history_dates.append(dati.index[0] if not dati.empty else None)
+        # Ritorna equity curve vuote e metriche minime
+        return [], pd.Series(dtype=float), pd.Series(dtype=float), {'Capitale finale (€)': equity, 'Rendimento della strategia (%)': 0.0}
+
+    # Inizia l'iterazione *dal giorno dopo* il primo segnale valido, perché l'esecuzione avviene all'Open
+    # del giorno successivo al segnale.
+    start_idx_simulation_iloc = dati.index.get_loc(first_valid_idx_loc) + 1
+
+    # Se l'indice di inizio simulazione è oltre la fine dei dati, non ci sono giorni successivi per operare.
+    if start_idx_simulation_iloc >= len(dati):
+         print("Avviso backtest: Dati insufficienti per l'esecuzione dopo il primo segnale valido.")
+         # Ritorna risultati iniziali se non ci sono giorni per operare
+         equity_history.append(equity)
+         equity_history_dates.append(dati.index[-1] if not dati.empty else None) # Usa l'ultima data disponibile se c'è
+         # Ritorna equity curve vuote e metriche minime
+         return [], pd.Series(dtype=float), pd.Series(dtype=float), {'Capitale finale (€)': equity, 'Rendimento della strategia (%)': 0.0}
+
+    # --- Calcolo Iniziale per Buy & Hold ---
+    buy_hold_history = []
+    # Calcola il valore del Buy & Hold a partire dall'apertura del primo giorno di simulazione
+    # Normalizzato al capitale iniziale.
+    first_open_price_sim = dati['Open'].iloc[start_idx_simulation_iloc]
+    if first_open_price_sim > 0: # Evita divisione per zero
+        # Loop per calcolare l'equity curve del Buy & Hold per ogni barra *della simulazione*
+        for i in range(start_idx_simulation_iloc, len(dati)):
+            current_close_price = dati['Close'].iloc[i]
+            # Equity BH = Capitale Iniziale * (Prezzo Chiusura Corrente / Prezzo Apertura Primo Giorno Simulazione)
+            bh_value = capitale_iniziale * (current_close_price / first_open_price_sim)
+            buy_hold_history.append(bh_value)
+        # Crea la serie Buy & Hold con gli indici di data corrispondenti all'intervallo di simulazione
+        buy_hold_series = pd.Series(buy_hold_history, index=dati.index[start_idx_simulation_iloc:])
+    else:
+        # Se il primo prezzo di apertura è zero, la Buy & Hold equity curve non può essere calcolata
+        buy_hold_series = pd.Series(dtype=float)
+
+
+    # --- Simulazione Barra per Barra ---
+    # Iteriamo sugli indici numerici delle barre a partire da start_idx_simulation_iloc.
+    for i in range(start_idx_simulation_iloc, len(dati)):
+        current_date = dati.index[i]
+        open_price = dati['Open'].iloc[i]
+        high_price = dati['High'].iloc[i]
+        low_price = dati['Low'].iloc[i]
+        close_price = dati['Close'].iloc[i]
+
+        # Il segnale è quello generato alla chiusura del giorno precedente (i-1)
+        signal_prev_day = dati['Signal'].iloc[i-1]
+
+        # --- Logica di Trading per la Barra Corrente ---
+
+        trade_executed_in_bar = False
+
+        # 1. Se in posizione, controlla uscite forzate (SL/TP/TS)
+        if position != 'Flat':
+            exit_price_forced = None
+            exit_reason_forced = None
+
+            sl_price = entry_price * (1 - stop_loss_percent / 100) if position == 'Long' and stop_loss_percent is not None else None
+            sl_price = entry_price * (1 + stop_loss_percent / 100) if position == 'Short' and stop_loss_percent is not None else sl_price
+
+            tp_price = entry_price * (1 + take_profit_percent / 100) if position == 'Long' and take_profit_percent is not None else None
+            tp_price = entry_price * (1 - take_profit_percent / 100) if position == 'Short' and take_profit_percent is not None else tp_price
+
+            ts_price = None
+            if trailing_stop_percent is not None:
+                 if position == 'Long' and peak_price_since_entry is not None:
+                      ts_price = peak_price_since_entry * (1 - trailing_stop_percent / 100)
+                 elif position == 'Short' and lowest_price_since_entry is not None:
+                      ts_price = lowest_price_since_entry * (1 + trailing_stop_percent / 100)
+
+
+            # Check SL
+            if sl_price is not None and ((position == 'Long' and low_price <= sl_price) or (position == 'Short' and high_price >= sl_price)):
+                exit_price_forced = sl_price
+                exit_reason_forced = 'Stop Loss'
+                trade_executed_in_bar = True
+            # Check TP (solo se SL non è stato attivato e TP è abilitato)
+            elif tp_price is not None and ((position == 'Long' and high_price >= tp_price) or (position == 'Short' and low_price <= tp_price)):
+                 exit_price_forced = tp_price
+                 exit_reason_forced = 'Take Profit'
+                 trade_executed_in_bar = True
+            # Check TS (solo se SL/TP non sono stati attivati e TS è abilitato)
+            elif ts_price is not None and ((position == 'Long' and low_price <= ts_price) or (position == 'Short' and high_price >= ts_price)):
+                 exit_price_forced = ts_price
+                 exit_reason_forced = 'Trailing Stop'
+                 trade_executed_in_bar = True
+
+
+            # Se una uscita forzata si è verificata
+            if trade_executed_in_bar and exit_price_forced is not None:
+                if position == 'Long':
+                    gross_pl = (exit_price_forced - entry_price) * units
+                else: # Short
+                    gross_pl = (entry_price - exit_price_forced) * units
+
+                commission_on_entry = entry_price * units * commissione_percentuale / 100
+                commission_on_exit = exit_price_forced * units * commissione_percentuale / 100
+                total_commission_amount = abs(commission_on_entry) + abs(commission_on_exit)
+
+                net_pl = gross_pl - total_commission_amount
+
+                equity += net_pl
+
+                list_of_trades.append({
+                    'entry_date': entry_date,
+                    'entry_price': entry_price,
+                    'exit_date': current_date, # La data di uscita è la data della barra corrente
+                    'exit_price': exit_price_forced, # Prezzo di uscita è il prezzo di trigger
+                    'position_type': position,
+                    'exit_reason': exit_reason_forced,
+                    'units': units,
+                    'gross_profit_loss': gross_pl,
+                    'commission': total_commission_amount,
+                    'profit_loss': net_pl
+                })
+
+                position = 'Flat'
+                units = 0
+                entry_price = 0.0
+                entry_date = None
+                peak_price_since_entry = None
+                lowest_price_since_entry = None
+
+
+            # 2. Se ancora in posizione, controlla segnale strategia per uscita
+            if position != 'Flat' and not trade_executed_in_bar:
+                 is_exit_signal_strategy = False
+                 if position == 'Long' and (signal_prev_day == -1 or signal_prev_day == 0):
+                      is_exit_signal_strategy = True
+                 elif position == 'Short' and (signal_prev_day == 1 or signal_prev_day == 0):
+                      is_exit_signal_strategy = True
+
+                 if is_exit_signal_strategy:
+                      exit_price_strategy = open_price
+
+                      if position == 'Long':
+                           gross_pl = (exit_price_strategy - entry_price) * units
+                      else: # Short
+                           gross_pl = (entry_price - exit_price_strategy) * units
+
+                      commission_on_entry = entry_price * units * commissione_percentuale / 100
+                      commission_on_exit = exit_price_strategy * units * commissione_percentuale / 100
+                      total_commission_amount = abs(commission_on_entry) + abs(commission_on_exit)
+
+                      net_pl = gross_pl - total_commission_amount
+
+                      equity += net_pl
+
+                      list_of_trades.append({
+                          'entry_date': entry_date,
+                          'entry_price': entry_price,
+                          'exit_date': current_date, # La data di uscita è la data della barra corrente
+                          'exit_price': exit_price_strategy, # Prezzo di uscita è l'Open di oggi
+                          'position_type': position,
+                          'exit_reason': 'Strategy',
+                          'units': units,
+                          'gross_profit_loss': gross_pl,
+                          'commission': total_commission_amount,
+                          'profit_loss': net_pl
+                      })
+
+                      position = 'Flat'
+                      units = 0
+                      entry_price = 0.0
+                      entry_date = None
+                      peak_price_since_entry = None
+                      lowest_price_since_entry = None
+                      trade_executed_in_bar = True
+
+        # 3. Se Flat, controlla segnale strategia per ingresso
+        if position == 'Flat' and not trade_executed_in_bar:
+            if signal_prev_day == 1: # Segnale per entrare Long
+                if open_price > 0:
+                    units_to_buy = capitale_iniziale / open_price
+
+                    position = 'Long'
+                    units = units_to_buy
+                    entry_price = open_price
+                    entry_date = current_date
+                    peak_price_since_entry = high_price
+                    lowest_price_since_entry = low_price
+                    trade_executed_in_bar = True
+
+            elif signal_prev_day == -1 and abilita_short: # Segnale per entrare Short
+                 if open_price > 0:
+                     units_to_sell = capitale_iniziale / open_price
+
+                     position = 'Short'
+                     units = units_to_sell
+                     entry_price = open_price
+                     entry_date = current_date
+                     peak_price_since_entry = high_price
+                     lowest_price_since_entry = low_price
+                     trade_executed_in_bar = True
+
+
+        # 4. Aggiorna Picco/Fondo per Trailing Stop per la posizione corrente (se aperta)
+        if position == 'Long':
+             if peak_price_since_entry is None: peak_price_since_entry = high_price
+             else: peak_price_since_entry = max(peak_price_since_entry, high_price)
+        elif position == 'Short':
+             if lowest_price_since_entry is None: lowest_price_since_entry = low_price
+             else: lowest_price_since_entry = min(lowest_price_since_entry, low_price)
+
+
+        # 5. Calcola e registra l'Equity corrente TOTALE (realizzata + non realizzata)
+        current_unrealized_pl = 0.0
+        if position == 'Long':
+             current_unrealized_pl = (close_price - entry_price) * units
+        elif position == 'Short':
+             current_unrealized_pl = (entry_price - close_price) * units
+
+        current_total_equity = equity + current_unrealized_pl
+        equity_history.append(current_total_equity)
+        equity_history_dates.append(current_date)
+
+        # Aggiorna picco equity e calcola drawdown massimo basato sull'equity totale
+        peak_equity_overall = max(peak_equity_overall, current_total_equity)
+        current_drawdown_currency = peak_equity_overall - current_total_equity
+        max_drawdown_currency = max(max_drawdown_currency, current_drawdown_currency)
+
+        if peak_equity_overall > 0:
+             current_drawdown_percent = (current_drawdown_currency / peak_equity_overall) * 100
+             max_drawdown_percent = max(max_drawdown_percent, current_drawdown_percent)
+
+
+    # --- Fine Loop di Simulazione ---
+
+    # --- Gestione Posizione Finale Aperta (se presente) ---
+    # Se al termine del loop c'è una posizione aperta, la chiudiamo all'ultimo prezzo di chiusura disponibile
+    # Questo trade finale viene aggiunto alla lista dei trade chiusi e il suo P/L netto contribuisce all'equity realizzata finale.
+    # L'equity_history non viene aggiornata qui, perché l'ultima riga già rappresenta l'equity (realizzata + non realizzata)
+    # alla chiusura dell'ultima barra. La metrica 'Capitale finale' userà l'equity realizzata.
+    if position != 'Flat' and not dati.empty:
+        final_close_price = dati['Close'].iloc[-1]
+        final_exit_date = dati.index[-1]
+
+        if position == 'Long':
+            gross_pl = (final_close_price - entry_price) * units
+        else: # Short
+            gross_pl = (entry_price - final_close_price) * units
+
+        commission_on_entry = entry_price * units * commissione_percentuale / 100
+        commission_on_exit = final_close_price * units * commissione_percentuale / 100
+        total_commission_amount = abs(commission_on_entry) + abs(commission_on_exit)
+
+        net_pl = gross_pl - total_commission_amount
+
+        # Aggiorna l'equity realizzata con il P/L netto del trade finale
+        equity += net_pl
+
+
+        list_of_trades.append({
+            'entry_date': entry_date,
+            'entry_price': entry_price,
+            'exit_date': final_exit_date,
+            'exit_price': final_close_price,
+            'position_type': position,
+            'exit_reason': 'End of Data', # Chiuso perché i dati sono finiti
+            'units': units,
+            'gross_profit_loss': gross_pl,
+            'commission': total_commission_amount,
+            'profit_loss': net_pl
+        })
+
+
+    # --- Calcolo Metriche di Performance ---
+    metriche_risultati = {}
+
+    # Capitale finale (€) - È l'equity realizzata finale (capitale iniziale + somma P/L netti di tutti i trade chiusi)
+    final_equity = capitale_iniziale + sum(trade['profit_loss'] for trade in list_of_trades)
+    metriche_risultati['Capitale finale (€)'] = round(final_equity, 2)
+
+    # Rendimento della strategia (%)
+    rendimento_strategia = (final_equity - capitale_iniziale) / capitale_iniziale * 100 if capitale_iniziale != 0 else 0.0
+    metriche_risultati['Rendimento della strategia (%)'] = round(rendimento_strategia, 2)
+
+    # Profitto/Rendimento Buy&Hold
+    profitto_bh_netto = 0.0
+    rendimento_bh = 0.0
+    if not buy_hold_series.empty:
+        first_open_price_sim_for_metrics = dati['Open'].iloc[start_idx_simulation_iloc]
+        last_close_price_sim_for_metrics = dati['Close'].iloc[-1]
+
+        if first_open_price_sim_for_metrics > 0:
+             units_bh_for_metrics = capitale_iniziale / first_open_price_sim_for_metrics
+             profitto_bh_lordo = (last_close_price_sim_for_metrics - first_open_price_sim_for_metrics) * units_bh_for_metrics
+             commission_bh = (first_open_price_sim_for_metrics * units_bh_for_metrics * commissione_percentuale / 100) + \
+                              (last_close_price_sim_for_metrics * units_bh_for_metrics * commissione_percentuale / 100)
+             profitto_bh_netto = profitto_bh_lordo - abs(commission_bh)
+
+             rendimento_bh = (profitto_bh_netto / capitale_iniziale) * 100 if capitale_iniziale != 0 else 0.0
+
+    metriche_risultati['Profitto Buy&Hold (€)'] = round(profitto_bh_netto, 2)
+    metriche_risultati['Rendimento del Buy&Hold (%)'] = round(rendimento_bh, 2)
+
+
+    # Conteggio operazioni
+    total_closed_trades = len(list_of_trades)
+    metriche_risultati['Operazioni chiuse (n)'] = total_closed_trades
+
+    long_trades_count = sum(1 for trade in list_of_trades if trade['position_type'] == 'Long')
+    metriche_risultati['Operazioni Long (n)'] = long_trades_count
+
+    short_trades_count = sum(1 for trade in list_of_trades if trade['position_type'] == 'Short')
+    metriche_risultati['Operazioni Short (n)'] = short_trades_count
+
+    sl_trades_count = sum(1 for trade in list_of_trades if trade['exit_reason'] == 'Stop Loss')
+    metriche_risultati['Operazioni chiuse per SL (n)'] = sl_trades_count
+
+    tp_trades_count = sum(1 for trade in list_of_trades if trade['exit_reason'] == 'Take Profit')
+    metriche_risultati['Operazioni chiuse per TP (n)'] = tp_trades_count
+
+    ts_trades_count = sum(1 for trade in list_of_trades if trade['exit_reason'] == 'Trailing Stop')
+    metriche_risultati['Operazioni chiuse per TS (n)'] = ts_trades_count
+
+    # Analisi dei rendimenti delle singole operazioni
+    trade_returns_percent = []
+    profit_trades_pl = []
+    loss_trades_pl = []
+    trade_durations = [] # <-- Lista per le durate dei trade
+
+    max_profit_trade = {'profit_loss': -float('inf'), 'exit_date': None}
+    max_loss_trade = {'profit_loss': float('inf'), 'exit_date': None}
+
+
+    for trade in list_of_trades:
+        # Calcola rendimento percentuale netto per trade basato sul valore di ingresso
+        entry_value = trade['entry_price'] * trade['units']
+        if entry_value > 0:
+             trade_return_percent = (trade['profit_loss'] / entry_value) * 100
+             trade_returns_percent.append(trade_return_percent)
+        else:
+             trade_returns_percent.append(0.0)
+
+        # Calcola la durata del trade (solo se entry e exit date sono valide)
+        if pd.notna(trade['entry_date']) and pd.notna(trade['exit_date']):
+            duration = trade['exit_date'] - trade['entry_date']
+            trade_durations.append(duration)
+
+
+        if trade['profit_loss'] > 0:
+            profit_trades_pl.append(trade['profit_loss'])
+            if trade['profit_loss'] > max_profit_trade['profit_loss']:
+                max_profit_trade['profit_loss'] = trade['profit_loss']
+                max_profit_trade['exit_date'] = trade['exit_date']
+        elif trade['profit_loss'] < 0:
+            loss_trades_pl.append(trade['profit_loss'])
+            if trade['profit_loss'] < max_loss_trade['profit_loss']:
+                 max_loss_trade['profit_loss'] = trade['profit_loss']
+                 max_loss_trade['exit_date'] = trade['exit_date']
+
+
+    # Calcola metriche basate sui rendimenti dei trade
+    avg_trade_return = np.mean(trade_returns_percent) if trade_returns_percent else 0.0
+    metriche_risultati['Rendimento medio singola operazione al netto delle commissioni (%)'] = round(avg_trade_return, 2)
+
+    std_dev_trade_return = np.std(trade_returns_percent) if trade_returns_percent else 0.0
+    metriche_risultati['Deviazione standard rendimento medio (%)'] = round(std_dev_trade_return, 2)
+
+    long_trade_returns = [tr for i, tr in enumerate(trade_returns_percent) if list_of_trades[i]['position_type'] == 'Long']
+    avg_long_return = np.mean(long_trade_returns) if long_trade_returns else 0.0
+    metriche_risultati['Rendimento medio singola operazione LONG al netto delle commissioni (%)'] = round(avg_long_return, 2)
+
+    short_trade_returns = [tr for i, tr in enumerate(trade_returns_percent) if list_of_trades[i]['position_type'] == 'Short']
+    avg_short_return = np.mean(short_trade_returns) if short_trade_returns else 0.0
+    metriche_risultati['Rendimento medio singola operazione SHORT al netto delle commissioni (%)'] = round(avg_short_return, 2)
+
+
+    # Calcola la durata media delle operazioni
+    avg_trade_duration = np.mean(trade_durations) if trade_durations else datetime.timedelta(0) # Media delle Timedelta
+    # Converti la durata media in giorni (float)
+    avg_trade_duration_days = avg_trade_duration.total_seconds() / (24 * 3600) if trade_durations else 0.0
+    metriche_risultati['Durata media operazioni (giorni)'] = round(avg_trade_duration_days, 2) # <-- NUOVA METRICA
+
+
+    # Somma profitti/perdite
+    total_gross_profit = sum(profit_trades_pl) if profit_trades_pl else 0.0
+    metriche_risultati['Somma degli importi delle operazioni in guadagno (€)'] = round(total_gross_profit, 2)
+
+    total_gross_loss = sum(loss_trades_pl) if loss_trades_pl else 0.0
+    metriche_risultati['Somma degli importi delle operazioni in perdita (€)'] = round(total_gross_loss, 2)
+
+    # Percentuali vincenti/perdenti
+    winning_trades_count = len(profit_trades_pl)
+    losing_trades_count = len(loss_trades_pl)
+    total_for_percentage = total_closed_trades
+
+    percent_winning = (winning_trades_count / total_for_percentage) * 100 if total_for_percentage > 0 else 0.0
+    metriche_risultati['Percentuale di operazioni vincenti (%)'] = round(percent_winning, 2)
+
+    percent_losing = (losing_trades_count / total_for_percentage) * 100 if total_for_percentage > 0 else 0.0
+    metriche_risultati['Percentuale di operazioni perdenti (%)'] = round(percent_losing, 2)
+
+    # Guadagno/Perdita massimo singola operazione
+    metriche_risultati['Guadagno massimo di una operazione (€)'] = round(max_profit_trade['profit_loss'] if max_profit_trade['profit_loss'] != -float('inf') else 0.0, 2)
+    metriche_risultati['Data dell\'operazione con guadagno massimo (yyyy-mm-dd)'] = max_profit_trade['exit_date'].strftime('%Y-%m-%d') if pd.notna(max_profit_trade['exit_date']) else 'N/A'
+
+    metriche_risultati['Perdita massima di una operazione (€)'] = round(abs(max_loss_trade['profit_loss']) if max_loss_trade['profit_loss'] != float('inf') else 0.0, 2)
+    metriche_risultati['Data dell\'operazione con perdita massima (yyyy-mm-dd)'] = max_loss_trade['exit_date'].strftime('%Y-%m-%d') if pd.notna(max_loss_trade['exit_date']) else 'N/A'
+
+
+    # Massimo drawdown (già calcolato nel loop)
+    metriche_risultati['Massimo drawdown (€)'] = round(max_drawdown_currency, 2)
+    metriche_risultati['Massimo drawdown in percentuale(%)'] = round(max_drawdown_percent, 2)
+
+
+    # --- Ritorna Risultati ---
+    equity_series = pd.Series(equity_history, index=equity_history_dates if equity_history_dates else None)
+    # Ritorna anche la serie Buy&Hold
+    return list_of_trades, equity_series, buy_hold_series, metriche_risultati
+
+# --- Puoi aggiungere qui altre funzioni di supporto per il backtesting ---
+
+
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+# plotting_utils
+
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import datetime # Importa il modulo datetime per Timedelta
+import sys # Importa sys per le stampe di debug
+
+def plot_backtest_results(
+    dati_con_indicatori: pd.DataFrame, # Questo DF ora contiene anche gli indicatori della strategia
+    lista_dei_trade: list,
+    ticker: str,
+    nome_esteso: str,
+    plotly_dragmode: str,
+
+    # Lista dei nomi delle colonne indicatore da plottare (fornita dalla strategia o analisi tecnica)
+    indicator_cols_to_plot: list[str],
+
+    # Puoi aggiungere qui altri dati o metriche di backtest se vuoi visualizzarli nel grafico
+    # es. equity_curve: pd.Series = None, # Potresti voler plottare l'equity curve su un 2° pannello
+
+) -> go.Figure:
+    """
+    Genera un grafico Plotly interattivo con prezzo, indicatori tecnici e marker dei trade.
+    Gli indicatori overlay (Medie Mobili, Bande di Bollinger) vengono plottati sul pannello del prezzo.
+    Gli indicatori oscillatori (RSI, ROC, Stocastico) vengono plottati su pannelli separati sotto il prezzo.
+
+    Args:
+        dati_con_indicatori (pd.DataFrame): DataFrame con dati OHLCV, indicatori, e colonna 'Signal' (se presente).
+        lista_dei_trade (list): Elenco dei trade eseguiti (vuoto per Analisi Tecnica).
+        ticker (str): Simbolo del ticker.
+        nome_esteso (str): Nome esteso del ticker.
+        plotly_dragmode (str): Modalità di trascinamento per il grafico ('zoom' o 'pan').
+        indicator_cols_to_plot (list[str]): Lista dei nomi delle colonne indicatori dal DF da plottare.
+
+    Returns:
+        go.Figure: L'oggetto figura Plotly.
+    """
+
+    print(f"DEBUG (plotting_utils): Inizio plot_backtest_results per {ticker}", file=sys.stderr)
+    print(f"DEBUG (plotting_utils): indicator_cols_to_plot ricevuto: {indicator_cols_to_plot}", file=sys.stderr)
+    if dati_con_indicatori is not None:
+         print(f"DEBUG (plotting_utils): Colonne nel DataFrame dati_con_indicatori: {list(dati_con_indicatori.columns)}", file=sys.stderr)
+    else:
+         print("DEBUG (plotting_utils): dati_con_indicatori è None", file=sys.stderr)
+
+
+    if dati_con_indicatori is None or dati_con_indicatori.empty:
+        print("DEBUG (plotting_utils): Dati non disponibili per il plotting.", file=sys.stderr)
+        # Ritorna una figura vuota o con un messaggio
+        fig = go.Figure()
+        fig.update_layout(title_text="Dati non disponibili per il plotting")
+        return fig
+
+
+    # --- Categorizza gli indicatori per il plotting ---
+    overlay_indicators = []
+    separate_indicators = {
+        'RSI': [],
+        'ROC': [],
+        'STOCH': []
+    } # Useremo un dizionario per raggruppare gli indicatori per pannello
+
+    print("DEBUG (plotting_utils): Inizio categorizzazione indicatori.", file=sys.stderr)
+    for col_name in indicator_cols_to_plot:
+        print(f"DEBUG (plotting_utils): Processando colonna indicatore: {col_name}", file=sys.stderr)
+        is_separate = False
+        for ind_type in separate_indicators.keys():
+            # Usiamo .startswith() per controllare i prefissi comuni
+            # Aggiunto controllo esplicito per i nomi delle colonne dello Stocastico
+            if col_name.startswith(ind_type) or (ind_type == 'STOCH' and ('STOCHk' in col_name or 'STOCHd' in col_name or 'DIFF' in col_name)):
+                separate_indicators[ind_type].append(col_name)
+                is_separate = True
+                print(f"DEBUG (plotting_utils):   Categorizzato come separato: {ind_type}", file=sys.stderr)
+                break # Una volta trovato il tipo separato, passa al prossimo indicatore
+
+        if not is_separate:
+            # Se non è un tipo separato, consideralo un overlay
+            overlay_indicators.append(col_name)
+            print(f"DEBUG (plotting_utils):   Categorizzato come overlay.", file=sys.stderr)
+
+    print("DEBUG (plotting_utils): Fine categorizzazione indicatori.", file=sys.stderr)
+    print(f"DEBUG (plotting_utils): Indicatori Overlay: {overlay_indicators}", file=sys.stderr)
+    print(f"DEBUG (plotting_utils): Indicatori Separati (raggruppati): {separate_indicators}", file=sys.stderr)
+
+
+    # --- Determina il numero di righe e i tipi di subplot ---
+    rows = 1 # Una riga per il prezzo e gli overlay
+    row_heights = [0.7] # Altezza iniziale per il pannello del prezzo (70%)
+    # Rimosso il titolo del subplot principale qui, verrà gestito dal layout generale se necessario
+    subplot_titles = [''] # Lascia vuoto il titolo del primo subplot
+    specs = [[{"secondary_y": True}]] # Il primo pannello potrebbe avere un asse y secondario per il volume (non implementato qui)
+
+    # Aggiungi righe per gli indicatori separati che sono stati selezionati
+    # Mantieni l'ordine: RSI, ROC, Stocastico
+    separate_panel_types_order = ['RSI', 'ROC', 'STOCH']
+    panel_row_map = {} # Mappa il tipo di indicatore separato alla sua riga
+
+    num_separate_panels = len([t for t in separate_panel_types_order if separate_indicators.get(t) and len(separate_indicators[t]) > 0])
+    if num_separate_panels > 0:
+        rows += num_separate_panels
+        # Distribuisci l'altezza rimanente (0.3) equamente tra i pannelli separati
+        height_per_separate_panel = 0.3 / num_separate_panels
+        row_heights.extend([height_per_separate_panel] * num_separate_panels)
+
+        # Assegna le righe ai tipi di indicatori separati
+        current_row = 2 # Inizia dalla seconda riga
+        for ind_type in separate_panel_types_order:
+            if separate_indicators.get(ind_type) and len(separate_indicators[ind_type]) > 0:
+                subplot_titles.append(f'{ind_type}') # Titolo per il pannello separato
+                specs.append([{"secondary_y": False}]) # I pannelli separati di solito non hanno un asse y secondario
+                panel_row_map[ind_type] = current_row # Mappa il tipo alla riga corrente
+                current_row += 1
+
+
+    print(f"DEBUG (plotting_utils): Numero di righe: {rows}", file=sys.stderr)
+    print(f"DEBUG (plotting_utils): Altezze righe: {row_heights}", file=sys.stderr)
+    print(f"DEBUG (plotting_utils): Titoli subplot: {subplot_titles}", file=sys.stderr)
+    print(f"DEBUG (plotting_utils): Mappa pannello-riga: {panel_row_map}", file=sys.stderr)
+
+
+    # Crea la figura con i subplots
+    fig = make_subplots(
+        rows=rows,
+        cols=1,
+        shared_xaxes=True, # Condividi l'asse x tra tutti i pannelli
+        vertical_spacing=0.05, # Spazio verticale tra i pannelli
+        subplot_titles=subplot_titles, # Titoli per ogni pannello
+        row_heights=row_heights,
+        specs=specs
+    )
+
+    # --- Aggiungi il grafico del prezzo (Linea di Chiusura) ---
+    # Plottato sempre sulla prima riga (row=1, col=1)
+    if 'Close' in dati_con_indicatori.columns and not dati_con_indicatori['Close'].empty:
+         fig.add_trace(go.Scatter(x=dati_con_indicatori.index, y=dati_con_indicatori['Close'], mode='lines', name='Close'), row=1, col=1)
+    else:
+         print("DEBUG (plotting_utils): Colonna 'Close' mancante o vuota. Impossibile plottare il prezzo.", file=sys.stderr)
+
+
+    # --- Aggiungi Indicatori Overlay (SMA, EMA, Bande di Bollinger) ---
+    # Plottati sulla prima riga (row=1, col=1)
+    if overlay_indicators:
+        print(f"DEBUG (plotting_utils): Aggiungendo {len(overlay_indicators)} indicatori overlay.", file=sys.stderr)
+        for col_name in overlay_indicators:
+            if col_name in dati_con_indicatori.columns:
+                print(f"DEBUG (plotting_utils): Aggiungendo traccia overlay: {col_name}", file=sys.stderr)
+
+                # --- DEBUG DATI ---
+                print(f"DEBUG (plotting_utils): Ispezione dati per colonna overlay '{col_name}':", file=sys.stderr)
+                print(f"DEBUG (plotting_utils):   Dtype: {dati_con_indicatori[col_name].dtype}", file=sys.stderr)
+                print(f"DEBUG (plotting_utils):   NaN count: {dati_con_indicatori[col_name].isna().sum()}", file=sys.stderr)
+                # --- FINE DEBUG DATI ---
+
+
+                # Puoi personalizzare colore/stile in base al nome della colonna se vuoi
+                line_style = {}
+                if 'SMA' in col_name:
+                    line_style = dict(dash='dash')
+                elif 'EMA' in col_name:
+                     line_style = dict(dash='dot')
+                elif 'BBM' in col_name:
+                     line_style = dict(dash='solid', color='blue') # Middle Band
+                elif 'BBU' in col_name or 'BBL' in col_name:
+                     line_style = dict(dash='solid', color='red') # Upper/Lower Bands
+                # Aggiungi altri stili per altri overlay se necessario
+
+                fig.add_trace(go.Scatter(x=dati_con_indicatori.index, y=dati_con_indicatori[col_name], mode='lines', name=col_name, line=line_style), row=1, col=1)
+            else:
+                print(f"DEBUG (plotting_utils): Colonna indicatore overlay '{col_name}' non trovata nel DataFrame. Saltata.", file=sys.stderr)
+
+
+    # --- Aggiungi Indicatori Separati (RSI, ROC, Stocastico) ---
+    # Plottati nelle righe appropriate in base a panel_row_map
+    print(f"DEBUG (plotting_utils): Aggiungendo indicatori separati.", file=sys.stderr)
+    for ind_type in separate_panel_types_order:
+        if ind_type in panel_row_map and separate_indicators.get(ind_type) and len(separate_indicators[ind_type]) > 0:
+            target_row = panel_row_map[ind_type]
+            print(f"DEBUG (plotting_utils): Aggiungendo indicatori per tipo '{ind_type}' nella riga {target_row}.", file=sys.stderr)
+            for col_name in separate_indicators[ind_type]:
+                 if col_name in dati_con_indicatori.columns:
+                      print(f"DEBUG (plotting_utils): Aggiungendo traccia separata: {col_name}", file=sys.stderr)
+
+                      # --- DEBUG DATI ---
+                      print(f"DEBUG (plotting_utils): Ispezione dati per colonna separata '{col_name}':", file=sys.stderr)
+                      print(f"DEBUG (plotting_utils):   Dtype: {dati_con_indicatori[col_name].dtype}", file=sys.stderr)
+                      print(f"DEBUG (plotting_utils):   NaN count: {dati_con_indicatori[col_name].isna().sum()}", file=sys.stderr)
+                      # --- FINE DEBUG DATI ---
+
+
+                      line_style = {}
+                      # Personalizza colore/stile per indicatori separati
+                      if 'RSI' in col_name:
+                           line_style = dict(color='purple')
+                      elif 'ROC' in col_name:
+                           line_style = dict(color='orange')
+                      elif 'STOCHk' in col_name:
+                           line_style = dict(color='blue') # %K
+                      elif 'STOCHd' in col_name:
+                           line_style = dict(color='red') # %D
+                      elif 'DIFF' in col_name:
+                           line_style = dict(color='green', dash='dash') # Differenza
+
+                      # --- Aggiunto try-except per diagnosticare l'errore specifico di Plotly ---
+                      try:
+                           fig.add_trace(go.Scatter(x=dati_con_indicatori.index, y=dati_con_indicatori[col_name], mode='lines', name=col_name, line=line_style), row=target_row, col=1)
+                           print(f"DEBUG (plotting_utils): Traccia per '{col_name}' aggiunta con successo.", file=sys.stderr)
+                      except Exception as e:
+                           print(f"ERRORE PLOTTING (plotting_utils): Errore durante l'aggiunta della traccia per l'indicatore separato '{col_name}': {e}", file=sys.stderr)
+                      # --- Fine try-except ---
+
+
+                 else:
+                     print(f"DEBUG (plotting_utils): Colonna indicatore separato '{col_name}' non trovata nel DataFrame. Saltata.", file=sys.stderr)
+
+            # Aggiungi linee orizzontali di riferimento per alcuni indicatori separati (es. RSI 30/70, Stocastico 20/80)
+            if ind_type == 'RSI':
+                 fig.add_hline(y=30, line_dash="dash", line_color="gray", row=target_row, col=1, annotation_text="30", annotation_position="bottom right")
+                 fig.add_hline(y=70, line_dash="dash", line_color="gray", row=target_row, col=1, annotation_text="70", annotation_position="top right")
+            elif ind_type == 'STOCH':
+                 fig.add_hline(y=20, line_dash="dash", line_color="gray", row=target_row, col=1, annotation_text="20", annotation_position="bottom right")
+                 fig.add_hline(y=80, line_dash="dash", line_color="gray", row=target_row, col=1, annotation_text="80", annotation_position="top right")
+
+
+    # --- INIZIO CODICE PER AGGIUNGERE MARKER DEI TRADE (Rimane invariato) ---
+    # Questo blocco di codice assume che 'lista_dei_trade' sia una lista valida (anche vuota)
+    # e che contenga dizionari trade con chiavi 'entry_date', 'entry_price', 'exit_date',
+    # 'exit_price', 'position_type', 'exit_reason'.
+    # I marker dei trade vengono sempre plottati sul pannello del prezzo (row=1, col=1).
+
+    if lista_dei_trade:
+        print(f"DEBUG (plotting_utils): Aggiungendo {len(lista_dei_trade)} trade markers.", file=sys.stderr)
+        long_entry_dates, long_entry_prices = [], []
+        long_exit_strategy_dates, long_exit_strategy_prices = [], []
+        long_exit_sl_dates, long_exit_sl_prices = [], []
+        long_exit_tp_dates, long_exit_tp_prices = [], []
+        long_exit_ts_dates, long_exit_ts_prices = [], []
+
+        short_entry_dates, short_entry_prices = [], []
+        short_exit_strategy_dates, short_exit_strategy_prices = [], []
+        short_exit_sl_dates, short_exit_sl_prices = [], []
+        short_exit_tp_dates, short_exit_tp_prices = [], []
+        short_exit_ts_dates, short_exit_ts_prices = [], []
+
+        # Offset verticale per i marker per non nasconderli sulla linea
+        try:
+             if 'Close' in dati_con_indicatori.columns and not dati_con_indicatori['Close'].empty:
+                 y_min = dati_con_indicatori['Close'].min()
+                 y_max = dati_con_indicatori['Close'].max()
+                 y_range_span = y_max - y_min
+                 offset_amount = y_range_span * 0.01
+                 if offset_amount == 0 or pd.isna(offset_amount):
+                     avg_price = dati_con_indicatori['Close'].mean() if not dati_con_indicatori['Close'].empty else 1.0
+                     offset_amount = avg_price * 0.005
+             else:
+                 offset_amount = 1.0
+
+        except Exception:
+             offset_amount = 1.0
+
+
+        for trade in lista_dei_trade:
+            if trade['position_type'] == 'Long':
+                long_entry_dates.append(trade['entry_date'])
+                long_entry_prices.append(trade['entry_price'] - offset_amount)
+            elif trade['position_type'] == 'Short':
+                short_entry_dates.append(trade['entry_date'])
+                short_entry_prices.append(trade['entry_price'] + offset_amount)
+
+            exit_price = trade['exit_price']
+            exit_date = trade['exit_date']
+
+            if trade['position_type'] == 'Long':
+                if trade['exit_reason'] == 'Strategy' or trade['exit_reason'] == 'End of Data':
+                     long_exit_strategy_dates.append(exit_date)
+                     long_exit_strategy_prices.append(exit_price + offset_amount)
+                elif trade['exit_reason'] == 'Stop Loss':
+                     long_exit_sl_dates.append(exit_date)
+                     long_exit_sl_prices.append(exit_price - offset_amount)
+                elif trade['exit_reason'] == 'Take Profit':
+                     long_exit_tp_dates.append(exit_date)
+                     long_exit_tp_prices.append(exit_price + offset_amount)
+                elif trade['exit_reason'] == 'Trailing Stop':
+                     long_exit_ts_dates.append(exit_date)
+                     long_exit_ts_prices.append(exit_price + offset_amount)
+
+            elif trade['position_type'] == 'Short':
+                 if trade['exit_reason'] == 'Strategy' or trade['exit_reason'] == 'End of Data':
+                      short_exit_strategy_dates.append(exit_date)
+                      short_exit_strategy_prices.append(exit_price - offset_amount)
+                 elif trade['exit_reason'] == 'Stop Loss':
+                      short_exit_sl_dates.append(exit_date)
+                      short_exit_sl_prices.append(exit_price + offset_amount)
+                 elif trade['exit_reason'] == 'Take Profit':
+                      short_exit_tp_dates.append(exit_date)
+                      short_exit_tp_prices.append(exit_price - offset_amount)
+                 elif trade['exit_reason'] == 'Trailing Stop':
+                      short_exit_ts_dates.append(exit_date)
+                      short_exit_ts_prices.append(exit_price - offset_amount)
+
+
+        # Aggiungi le tracce scatter per ogni tipo di marker (solo se ci sono dati nelle liste)
+        # Usiamo row=1, col=1 per aggiungerli nel pannello del prezzo
+
+        if long_entry_dates:
+             fig.add_trace(go.Scatter(x=long_entry_dates, y=long_entry_prices, mode='markers', name='Ingresso Long',
+                                     marker=dict(symbol='arrow-up', color='green', size=10, angleref='up')), row=1, col=1)
+
+        if long_exit_strategy_dates:
+             fig.add_trace(go.Scatter(x=long_exit_strategy_dates, y=long_exit_strategy_prices, mode='markers', name='Uscita Long (Strat.)',
+                                     marker=dict(symbol='arrow-down', color='red', size=10, angleref='up')), row=1, col=1)
+
+        if long_exit_sl_dates:
+             fig.add_trace(go.Scatter(x=long_exit_sl_dates, y=long_exit_sl_prices, mode='markers', name='Uscita Long (SL)',
+                                     marker=dict(symbol='diamond', color='darkorange', size=10)), row=1, col=1)
+
+        if long_exit_tp_dates:
+             fig.add_trace(go.Scatter(x=long_exit_tp_dates, y=long_exit_tp_prices, mode='markers', name='Uscita Long (TP)',
+                                     marker=dict(symbol='diamond', color='deepskyblue', size=10)), row=1, col=1)
+
+        if long_exit_ts_dates:
+             fig.add_trace(go.Scatter(x=long_exit_ts_dates, y=long_exit_ts_prices, mode='markers', name='Uscita Long (TS)',
+                                     marker=dict(symbol='diamond', color='gold', size=10)), row=1, col=1)
+
+
+        if short_entry_dates:
+             fig.add_trace(go.Scatter(x=short_entry_dates, y=short_entry_prices, mode='markers', name='Ingresso Short',
+                                     marker=dict(symbol='arrow-down', color='green', size=10, angleref='up')), row=1, col=1)
+
+        if short_exit_strategy_dates:
+             fig.add_trace(go.Scatter(x=short_exit_strategy_dates, y=short_exit_strategy_prices, mode='markers', name='Uscita Short (Strat.)',
+                                     marker=dict(symbol='arrow-up', color='red', size=10, angleref='up')), row=1, col=1)
+
+        if short_exit_sl_dates:
+             fig.add_trace(go.Scatter(x=short_exit_sl_dates, y=short_exit_sl_prices, mode='markers', name='Uscita Short (SL)',
+                                     marker=dict(symbol='diamond', color='darkorange', size=10)), row=1, col=1)
+
+        if short_exit_tp_dates:
+             fig.add_trace(go.Scatter(x=short_exit_tp_dates, y=short_exit_tp_prices, mode='markers', name='Uscita Short (TP)',
+                                     marker=dict(symbol='diamond', color='deepskyblue', size=10)), row=1, col=1)
+
+        if short_exit_ts_dates:
+             fig.add_trace(go.Scatter(x=short_exit_ts_dates, y=short_exit_ts_prices, mode='markers', name='Uscita Short (TS)',
+                                     marker=dict(symbol='diamond', color='gold', size=10)), row=1, col=1)
+
+    # --- FINE CODICE PER AGGIUNGERE MARKER DEI TRADE ---
+
+
+    # Aggiorna Layout generale del grafico
+    fig.update_layout(
+        # L'altezza totale si basa sulla somma delle altezze delle righe
+        height=min(max(500, rows * 250), 1000),
+        # Rimosso il titolo del grafico principale per evitare sovrapposizioni
+        # title_text=f'Grafico Prezzo e Indicatori ({ticker} - {nome_esteso})',
+        hovermode='x unified', # Mostra hover per tutte le tracce alla stessa data sull'asse x
+        dragmode=plotly_dragmode,
+        # Posiziona la legenda in alto
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02, # Sposta leggermente sopra il bordo superiore del grafico
+            xanchor="right",
+            x=1
+        )
+    )
+
+    # Aggiorna gli assi x per tutti i subplots (solo l'ultimo visibile con rangeslider)
+    # Rimuovi rangeslider da tutti gli assi x tranne l'ultimo
+    for i in range(1, rows + 1):
+         fig.update_xaxes(showticklabels=False, row=i, col=1) # Nascondi etichette x per tutti tranne l'ultimo
+
+    # Abilita showticklabels e rangeslider solo per l'asse x dell'ultima riga
+    fig.update_xaxes(showticklabels=True, row=rows, col=1, rangeslider=dict(visible=True))
+
+
+    # Aggiorna gli assi y - Imposta titoli se necessario
+    fig.update_yaxes(title_text="Prezzo", row=1, col=1) # Titolo per l'asse y del prezzo
+
+    # Imposta titoli per gli assi y dei pannelli separati
+    # Usa la mappa panel_row_map per impostare i titoli corretti nelle righe corrette
+    for ind_type, row_num in panel_row_map.items():
+         fig.update_yaxes(title_text=ind_type, row=row_num, col=1)
+         # Puoi impostare range specifici per gli assi y degli indicatori se necessario
+         # es. if ind_type == 'RSI': fig.update_yaxes(range=[0, 100], row=row_num, col=1)
+         # es. if ind_type == 'STOCH': fig.update_yaxes(range=[0, 100], row=row_num, col=1)
+
+
+    print("DEBUG (plotting_utils): Fine plot_backtest_results", file=sys.stderr)
+    return fig
+
+# --- FUNZIONE PER PLOTTARE LE EQUITY CURVE ---
+def plot_equity_comparison(strategy_equity: pd.Series, buy_hold_equity: pd.Series) -> go.Figure:
+    """
+    Genera un grafico Plotly per confrontare l'andamento dell'equity della strategia
+    con l'andamento normalizzato del Buy & Hold.
+
+    Args:
+        strategy_equity (pd.Series): Serie pandas dell'equity curve della strategia.
+        buy_hold_equity (pd.Series): Serie pandas dell'equity curve Buy & Hold normalizzata.
+
+    Returns:
+        go.Figure: L'oggetto figura Plotly con le due equity curve.
+    """
+    fig = go.Figure()
+
+    # Aggiungi la traccia per l'equity della strategia
+    if not strategy_equity.empty:
+        fig.add_trace(go.Scatter(
+            x=strategy_equity.index,
+            y=strategy_equity.values,
+            mode='lines',
+            name='Strategia',
+            line=dict(color='blue')
+        ))
+
+    # Aggiungi la traccia per l'equity del Buy & Hold
+    if not buy_hold_equity.empty:
+         fig.add_trace(go.Scatter(
+             x=buy_hold_equity.index,
+             y=buy_hold_equity.values,
+             mode='lines',
+             name='Buy & Hold',
+             line=dict(color='green', dash='dash')
+         ))
+
+
+    # Configura il layout del grafico
+    fig.update_layout(
+        title_text='Confronto Equity Curve: Strategia vs Buy & Hold',
+        xaxis_title='Data',
+        yaxis_title='Capitale (€)',
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        xaxis=dict(
+            rangeslider=dict(visible=True), # Mantieni rangeslider per il grafico equity
+            type='date'
+        )
+    )
+
+    return fig
+
+
+
+-------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+#cci_sma.py
+
+import pandas as pd
+import pandas_ta as ta
+
+def apply_strategy(df, cci_length=14, sma_length=20):
+    """
+    Implementa la strategia di trading CCI-SMA.
+
+    Args:
+        df (pd.DataFrame): DataFrame con colonne 'open', 'high', 'low', 'close', 'volume'.
+        cci_length (int): Periodo per il calcolo del CCI.
+        sma_length (int): Periodo per il calcolo della SMA.
+
+    Returns:
+        pd.DataFrame: DataFrame originale con l'aggiunta delle colonne degli indicatori
+                      e delle colonne per i segnali di trading ('long_entry', 'long_exit',
+                      'short_entry', 'short_exit').
+    """
+
+    # Calcolo del CCI
+    # pandas_ta aggiunge direttamente le colonne CCI al DataFrame
+    df.ta.cci(length=cci_length, append=True)
+
+    # Calcolo della SMA
+    df.ta.sma(length=sma_length, close='close', append=True)
+
+    # Rinominare le colonne per chiarezza (CCI_14, SMA_20)
+    cci_col = f"CCI_{cci_length}"
+    sma_col = f"SMA_{sma_length}"
+
+    # Inizializza le colonne dei segnali a False
+    df['long_entry'] = False
+    df['long_exit'] = False
+    df['short_entry'] = False
+    df['short_exit'] = False
+    df['position'] = 0 # 0: flat, 1: long, -1: short
+
+    # Assicurati che non ci siano valori NaN che potrebbero influenzare le condizioni
+    df.dropna(inplace=True)
+
+    # Applica le regole della strategia
+    for i in range(1, len(df)):
+        # Condizioni per il Long
+        cci_cross_above_zero = (df[cci_col].iloc[i] > 0) and (df[cci_col].iloc[i-1] <= 0)
+        price_above_sma = df['close'].iloc[i] > df[sma_col].iloc[i]
+
+        # Condizioni per lo Short
+        cci_cross_below_zero = (df[cci_col].iloc[i] < 0) and (df[cci_col].iloc[i-1] >= 0)
+        price_below_sma = df['close'].iloc[i] < df[sma_col].iloc[i]
+
+        # Logica di trading
+        if df['position'].iloc[i-1] == 0: # Se siamo flat
+            if cci_cross_above_zero and price_above_sma:
+                df.loc[df.index[i], 'long_entry'] = True
+                df.loc[df.index[i], 'position'] = 1
+            elif cci_cross_below_zero and price_below_sma:
+                df.loc[df.index[i], 'short_entry'] = True
+                df.loc[df.index[i], 'position'] = -1
+            else:
+                df.loc[df.index[i], 'position'] = 0
+
+        elif df['position'].iloc[i-1] == 1: # Se siamo Long
+            if cci_cross_below_zero and price_below_sma:
+                df.loc[df.index[i], 'long_exit'] = True
+                df.loc[df.index[i], 'position'] = 0 # Torna flat
+            else:
+                df.loc[df.index[i], 'position'] = 1 # Mantieni la posizione
+
+        elif df['position'].iloc[i-1] == -1: # Se siamo Short
+            if cci_cross_above_zero and price_above_sma:
+                df.loc[df.index[i], 'short_exit'] = True
+                df.loc[df.index[i], 'position'] = 0 # Torna flat
+            else:
+                df.loc[df.index[i], 'position'] = -1 # Mantieni la posizione
+
+    return df
+
+# --- Esempio di utilizzo ---
+if __name__ == "__main__":
+    # Creiamo un DataFrame di esempio con dati fittizi
+    data = {
+        'open': [100, 102, 101, 103, 105, 104, 106, 107, 108, 109, 110, 108, 106, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96, 95, 94],
+        'high': [103, 104, 103, 105, 107, 106, 108, 109, 110, 111, 112, 110, 108, 107, 106, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96],
+        'low': [99, 101, 100, 102, 104, 103, 105, 106, 107, 108, 109, 107, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96, 95, 94, 93],
+        'close': [102, 103, 102, 104, 106, 105, 107, 108, 109, 110, 111, 109, 107, 106, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96, 95],
+        'volume': [1000, 1200, 1100, 1300, 1500, 1400, 1600, 1700, 1800, 1900, 2000, 1800, 1600, 1500, 1400, 1300, 1200, 1100, 1000, 900, 800, 700, 600, 500, 400]
+    }
+    df = pd.DataFrame(data)
+
+    # Applica la strategia
+    df_result = cci_sma_strategy(df.copy(), cci_length=14, sma_length=20)
+
+    # Visualizza i risultati (solo le colonne rilevanti)
+    print(df_result[[
+        'close',
+        f"CCI_{14}",
+        f"SMA_{20}",
+        'long_entry',
+        'long_exit',
+        'short_entry',
+        'short_exit',
+        'position'
+    ]].tail(10)) # Mostra le ultime 10 righe per vedere i segnali
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+# incrocio medie mobili sma
+
+import pandas as pd
+from utils.calcolo_indicatori.sma import calculate_sma
+
+def apply_strategy():
+    """
+    Ritorna un dizionario che descrive i parametri necessari per questa strategia.
+    """
+    return {
+        'periodo_veloce': {
+            'label': 'Periodo SMA Veloce',
+            'type': 'number',
+            'default': 10,
+            'min_value': 1,
+            'step': 1,
+            'format': '%d', # <-- Correzione per il warning NumberInput
+            'help': 'Il periodo per la Media Mobile Veloce (più corto).'
+        },
+        'periodo_lenta': {
+            'label': 'Periodo SMA Lenta',
+            'type': 'number',
+            'default': 20,
+            'min_value': 1,
+            'step': 1,
+            'format': '%d', # <-- Correzione per il warning NumberInput
+            'help': 'Il periodo per la Media Mobile Lenta (più lungo).'
+        }
+    }
+
+# La signature e il return value ritornano 2 valori (DataFrame, list)
+def generate_signals(dati: pd.DataFrame, periodo_veloce: int, periodo_lenta: int) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Genera i segnali per la strategia Incrocio di due SMA basandosi sul prezzo di chiusura.
+
+    La colonna 'Signal' indica lo stato desiderato per la barra successiva:
+    1: Long (SMA Veloce > SMA Lenta alla chiusura corrente)
+    -1: Short (SMA Veloce < SMA Lenta alla chiusura corrente)
+    0: Flat / Nessun segnale valido (es. dati insufficienti)
+
+    Args:
+        dati (pd.DataFrame): DataFrame con i dati storici (deve contenere 'Close').
+        periodo_veloce (int): Periodo per la SMA veloce.
+        periodo_lenta (int): Periodo per la SMA lenta.
+
+    Returns:
+        tuple[pd.DataFrame, list[str]]: Il DataFrame originale con le colonne SMA e 'Signal' aggiunte,
+                                       e una lista di nomi colonne indicatori da plottare.
+                                       Include solo le colonne essenziali + quelle generate nel DF ritornato.
+    """
+    if 'Close' not in dati.columns:
+        print("Errore in incrocio_sma: Colonna 'Close' non trovata.")
+        dati['Signal'] = 0
+        return dati, [] # Ritorna DF + lista vuota
+
+    if periodo_veloce <= 0 or periodo_lenta <= 0:
+         print("Errore in incrocio_sma: Periodi SMA devono essere maggiori di zero.")
+         dati['Signal'] = 0
+         return dati, [] # Ritorna DF + lista vuota
+
+    if periodo_veloce >= periodo_lenta:
+        print("Avviso in incrocio_sma: Il periodo veloce dovrebbe essere minore del periodo lento.")
+        pass
+
+    min_data_needed = max(periodo_veloce, periodo_lenta)
+    if len(dati) < min_data_needed:
+        print(f"Avviso in incrocio_sma: Non abbastanza dati ({len(dati)}) per i periodi SMA ({periodo_veloce}, {periodo_lenta}).")
+        # Non aggiungere colonne SMA se non ci sono dati sufficienti
+        dati['Signal'] = 0
+        return dati, [] # Ritorna DF + lista vuota
+
+    # Calcola le due SMA sulla colonna 'Close'
+    # Queste chiamate aggiungono le colonne SMA al DataFrame 'dati'
+    dati = calculate_sma(dati, periodo=periodo_veloce, colonna='Close')
+    dati = calculate_sma(dati, periodo=periodo_lenta, colonna='Close')
+
+    sma_veloce_col = f'SMA_{periodo_veloce}'
+    sma_lenta_col = f'SMA_{periodo_lenta}'
+
+    # Controlla se le colonne SMA sono state effettivamente aggiunte e non sono solo NaN ovunque
+    # (calculate_sma dovrebbe gestire i NaN iniziali, ma controlliamo i nomi colonne)
+    if sma_veloce_col not in dati.columns or sma_lenta_col not in dati.columns:
+        print("Errore in incrocio_sma: Le colonne SMA non sono state calcolate o nominate correttamente.")
+        dati['Signal'] = 0
+        return dati, [] # Ritorna DF + lista vuota
+
+
+    # --- Genera i Segnali basati sullo stato corrente delle SMA ---
+    dati['Signal'] = 0 # Inizializza a Flat
+
+    # Imposta Signal a 1 dove SMA Veloce > SMA Lenta
+    dati.loc[dati[sma_veloce_col] > dati[sma_lenta_col], 'Signal'] = 1
+
+    # Imposta Signal a -1 dove SMA Lenta > SMA Veloce
+    # Correzione dal codice precedente: usare ">" per l'altra condizione
+    dati.loc[dati[sma_lenta_col] > dati[sma_veloce_col], 'Signal'] = -1
+
+    # Le righe con SMA NaN (all'inizio) rimangono a Signal = 0.
+
+    # Ritorna il DataFrame CON TUTTE le colonne necessarie per il backtester (OHLCV + Indicatori + Signal)
+    # E una lista con i nomi delle colonne indicatore da mostrare nel grafico
+    # È fondamentale che il DF ritornato contenga almeno OHLCV + Signal per il backtester,
+    # e gli indicatori se il backtester o il plotting li usano.
+    cols_to_keep = ['Open', 'High', 'Low', 'Close', 'Volume', sma_veloce_col, sma_lenta_col, 'Signal']
+    # Filtra le colonne per assicutarti che esistano prima di fare .copy()
+    cols_to_keep_existing = [col for col in cols_to_keep if col in dati.columns]
+
+    # Lista dei nomi delle colonne indicatore che questa strategia usa e vuole mostrare nel grafico
+    indicator_cols_to_plot = [sma_veloce_col, sma_lenta_col]
+    # Filtra i nomi per assicutarti che le colonne esistano
+    indicator_cols_to_plot_existing = [col for col in indicator_cols_to_plot if col in dati.columns]
+
+    # Ritorna la tupla (DataFrame, lista_nomi_colonne_indicatori)
+    return dati[cols_to_keep_existing].copy(), indicator_cols_to_plot_existing
+
+
+
+
+-------------------------------------------------------------------------------------------------------------------------------
+
+
+#livelli di bollinger
+
+import pandas as pd
+import numpy as np
+import pandas_ta as ta # Utilizziamo la libreria pandas_ta per calcolare le Bande di Bollinger
+
+# Definizione della strategia basata sui crossover del prezzo di chiusura con le Bande di Bollinger.
+
+def apply_strategy(
+    dati: pd.DataFrame,
+    length: int = 20, # Periodo per il calcolo della Media Mobile (Middle Band)
+    std: float = 2.0  # Moltiplicatore della Deviazione Standard per le Bande Superiore/Inferiore
+) -> tuple[pd.DataFrame, list]:
+    """
+    Genera segnali di trading basati sulla strategia dei crossover del prezzo di chiusura
+    con le Bande di Bollinger.
+
+    La logica dei segnali è:
+    - Entrata LONG: quando il prezzo di chiusura rompe dal basso verso l'alto la Banda di Bollinger inferiore.
+    - Uscita LONG: quando il prezzo di chiusura rompe verso il basso la Banda di Bollinger superiore,
+      o se il prezzo di chiusura rompe verso il basso la media mobile interna (Middle Band).
+    - Entrata SHORT: quando il prezzo di chiusura rompe verso il basso la Banda di Bollinger superiore.
+    - Uscita SHORT: quando il prezzo di chiusura rompe dal basso verso l'alto la Banda di Bollinger inferiore,
+      o se il prezzo di chiusura rompe verso l'alto la media mobile interna (Middle Band).
+
+    Args:
+        dati (pd.DataFrame): DataFrame con dati storici (deve contenere 'Close').
+        length (int): Periodo per il calcolo della Media Mobile (Middle Band).
+        std (float): Moltiplicatore della Deviazione Standard.
+
+    Returns:
+        tuple[pd.DataFrame, list]: Una tupla contenente:
+            - dati (pd.DataFrame): DataFrame originale con l'aggiunta delle colonne
+              degli indicatori (Bande di Bollinger) e dei segnali ('Signal').
+              La colonna 'Signal' contiene:
+              1 per segnale di entrata LONG
+              -1 per segnale di entrata SHORT
+              0 per nessun segnale o uscita
+            - indicator_cols (list): Lista dei nomi delle colonne degli indicatori aggiunti.
+    """
+    # Assicurati che la colonna necessaria sia presente
+    if 'Close' not in dati.columns:
+        print("Errore: Il DataFrame deve contenere la colonna 'Close'.")
+        return dati, []
+
+    # Calcola le Bande di Bollinger utilizzando pandas_ta
+    # pandas_ta aggiunge le colonne direttamente al DataFrame
+    # I nomi delle colonne saranno basati sui parametri, ad esempio BBL_20_2.0, BBM_20_2.0, BBU_20_2.0
+    bbands_cols = ta.bbands(
+        close=dati['Close'],
+        length=length,
+        std=std,
+        append=True # Aggiunge le colonne al DataFrame originale
+    )
+
+    # Determina i nomi esatti delle colonne create da pandas_ta
+    bbl_col_name = f'BBL_{length}_{std}' # Banda Inferiore
+    bbm_col_name = f'BBM_{length}_{std}' # Media Mobile (Middle Band)
+    bbu_col_name = f'BBU_{length}_{std}' # Banda Superiore
+
+    # Inizializza la colonna dei segnali a 0
+    dati['Signal'] = 0
+
+    # Assicurati che le colonne delle Bande di Bollinger esistano prima di usarle
+    if not all(col in dati.columns for col in [bbl_col_name, bbm_col_name, bbu_col_name]):
+         print(f"Errore: Colonne Bande di Bollinger non trovate nel DataFrame dopo il calcolo con pandas_ta. Verificare parametri ({length}, {std}).")
+         # Ritorna il DataFrame senza segnali se le bande non sono state calcolate
+         return dati, []
+
+
+    # Implementa la logica dei segnali
+    # Usiamo .shift(1) per confrontare il prezzo corrente con il prezzo della barra precedente
+    # rispetto alla posizione della banda.
+
+    # Entrata LONG: Close rompe dal basso verso l'alto la Banda Inferiore
+    # Condizione: Close attuale > Banda Inferiore attuale E Close precedente <= Banda Inferiore precedente
+    dati.loc[
+        (dati['Close'] > dati[bbl_col_name]) & (dati['Close'].shift(1) <= dati[bbl_col_name].shift(1)),
+        'Signal'
+    ] = 1
+
+    # Entrata SHORT: Close rompe verso il basso la Banda Superiore
+    # Condizione: Close attuale < Banda Superiore attuale E Close precedente >= Banda Superiore precedente
+    dati.loc[
+        (dati['Close'] < dati[bbu_col_name]) & (dati['Close'].shift(1) >= dati[bbu_col_name].shift(1)),
+        'Signal'
+    ] = -1
+
+    # Uscita LONG: Close rompe verso il basso la Banda Superiore O Close rompe verso il basso la Middle Band
+    # Questo segnale viene gestito dal backtesting engine quando una posizione LONG è aperta.
+    # Le condizioni di uscita LONG sono le stesse di entrata SHORT (crossover BBU verso il basso)
+    # O crossover BBM verso il basso.
+    # Non impostiamo esplicitamente un segnale di uscita qui, il backtest engine userà il segnale di ingresso SHORT (-1)
+    # o un segnale 0 se si verifica il crossover BBM verso il basso MA non il crossover BBU.
+    # Per implementare l'uscita LONG su crossover BBM verso il basso (senza essere anche un segnale SHORT),
+    # dovremmo aggiungere una logica più complessa o definire segnali di uscita separati.
+    # Per ora, il backtest engine userà il segnale -1 (se si verifica il crossover BBU verso il basso) come uscita Long.
+    # Se l'uscita Long deve avvenire SOLO su crossover BBM verso il basso (senza crossover BBU), la logica dei segnali
+    # deve essere più sfumata, magari usando segnali 2 per uscita Long e -2 per uscita Short.
+    # Manteniamo la logica semplificata per ora, dove un segnale -1 (Entrata SHORT) funge anche da Uscita LONG strategica,
+    # e un segnale 1 (Entrata LONG) funge anche da Uscita SHORT strategica.
+    # L'uscita su crossover BBM verso il basso per posizione LONG non è gestita direttamente da un segnale 0 o -1 in questa implementazione.
+    # Per includerla, la logica di generate_signals dovrebbe produrre segnali di uscita espliciti (es. 2 per Uscita Long, -2 per Uscita Short).
+
+    # Uscita SHORT: Close rompe dal basso verso l'alto la Banda Inferiore O Close rompe verso l'alto la Middle Band
+    # Questo segnale viene gestito dal backtesting engine quando una posizione SHORT è aperta.
+    # Le condizioni di uscita SHORT sono le stesse di entrata LONG (crossover BBL verso l'alto)
+    # O crossover BBM verso l'alto.
+    # Non impostiamo esplicitamente un segnale di uscita qui, il backtest engine userà il segnale di ingresso LONG (1)
+    # o un segnale 0 se si verifica il crossover BBM verso l'alto MA non il crossover BBL.
+
+
+    # Rimuovi eventuali segnali nelle prime righe dove gli indicatori non sono calcolabili
+    # a causa del periodo della Media Mobile.
+    # Le Bande di Bollinger necessitano di 'length' barre per essere calcolate.
+    if length > 0 and length < len(dati):
+        dati.loc[dati.index[:length], 'Signal'] = 0
+    elif length >= len(dati):
+         # Se il periodo è maggiore o uguale al numero di barre, non ci sono segnali validi.
+         dati['Signal'] = 0
+
+
+    # Definisci le colonne degli indicatori da includere nel grafico
+    indicator_cols = [bbl_col_name, bbm_col_name, bbu_col_name] # Includi le 3 bande
+
+    return dati, indicator_cols
+
+# Definizione dei parametri della strategia per la UI e l'ottimizzazione
+def get_strategy_parameters() -> dict:
+    """
+    Restituisce un dizionario che definisce i parametri configurabili
+    della strategia Bande di Bollinger.
+    """
+    return {
+        'length': {
+            'label': 'Periodo Media Mobile (Middle Band)',
+            'type': 'number',
+            'default': 20,
+            'min_value': 1,
+            'step': 1,
+            'format': '%d'
+        },
+        'std': {
+            'label': 'Moltiplicatore Deviazione Standard',
+            'type': 'number',
+            'default': 2.0,
+            'min_value': 0.1,
+            'step': 0.1,
+            'format': '%.1f'
+        }
+    }
+
+# --- Esempio di utilizzo (per test locale) ---
+# if __name__ == '__main__':
+#     print("Esecuzione test locale della strategia Bande di Bollinger...")
+#     # Crea dati fittizi per il test
+#     dates = pd.date_range(start='2020-01-01', periods=200, freq='D')
+#     data_test = pd.DataFrame({
+#         'Open': np.random.rand(200)*10 + 100,
+#         'High': np.random.rand(200)*10 + 105,
+#         'Low': np.random.rand(200)*10 + 95,
+#         'Close': np.random.rand(200)*10 + 100,
+#         'Volume': np.random.rand(200) * 100000
+#     }, index=dates)
+#
+#     # Aggiungi un trend per rendere i dati più realistici
+#     data_test['Close'] = data_test['Close'].cumsum() + 100
+#     data_test['Open'] = data_test['Close'].shift(1)
+#     data_test['High'] = data_test[['Open', 'Close']].max(axis=1) + np.random.rand(200)*5
+#     data_test['Low'] = data_test[['Open', 'Close']].min(axis=1) - np.random.rand(200)*5
+#     data_test = data_test.dropna() # Rimuovi la prima riga con NaN
+#
+#     print("Dati di test:")
+#     print(data_test.head())
+#
+#     # Esegui la generazione dei segnali
+#     dati_con_segnali, indicator_cols = generate_signals(data_test.copy(), length=20, std=2.0)
+#
+#     print("\nDati con segnali e indicatori (ultime 10 righe):")
+#     print(dati_con_segnali.tail(10))
+#
+#     print("\nColonne indicatori:")
+#     print(indicator_cols)
+#
+#     # Puoi visualizzare il grafico se hai le funzioni di plotting disponibili
+#     # Ad esempio, se hai una funzione plot_strategy_signals(dati, indicator_cols):
+#     # try:
+#     #     from utils.plotting_utils import plot_strategy_signals
+#     #     plot_strategy_signals(dati_con_segnali, indicator_cols)
+#     # except ImportError:
+#     #     print("\nFunzione di plotting non trovata. Salta la visualizzazione del grafico.")
+
+
+
+------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+#strategia con i livelli di stocastico
+
+import pandas as pd
+import numpy as np # Utilizziamo numpy come np
+import pandas_ta as ta # Utilizziamo la libreria pandas_ta per calcolare lo Stocastico
+
+# Definizione della strategia basata sulla differenza tra %D e %DD dello Stocastico.
+
+def apply_strategy(
+    dati: pd.DataFrame,
+    periodo_k: int = 14, # Periodo per il calcolo di %K
+    periodo_d: int = 3,  # Periodo per la prima media mobile di %K (%D)
+    periodo_dd: int = 3  # Periodo per la seconda media mobile di %D (%DD)
+) -> tuple[pd.DataFrame, list]:
+    """
+    Genera segnali di trading basati sulla strategia della differenza tra %D e %DD
+    dello Stocastico.
+
+    La logica dei segnali è:
+    - Entrata LONG: quando DIFF (%D - %DD) passa da negativo a positivo.
+    - Uscita LONG: quando DIFF (%D - %DD) passa da positivo a negativo.
+    - Entrata SHORT: quando DIFF (%D - %DD) passa da positivo a negativo.
+    - Uscita SHORT: quando DIFF (%D - %DD) passa da negativo a positivo.
+
+    Args:
+        dati (pd.DataFrame): DataFrame con dati storici (deve contenere 'High', 'Low', 'Close').
+        periodo_k (int): Periodo per il calcolo di %K.
+        periodo_d (int): Periodo per la prima media mobile di %K (%D).
+        periodo_dd (int): Periodo per la seconda media mobile di %D (%DD).
+
+    Returns:
+        tuple[pd.DataFrame, list]: Una tupla contenente:
+            - dati (pd.DataFrame): DataFrame originale con l'aggiunta delle colonne
+              degli indicatori ('STOCHk', 'STOCHd', 'STOCHd_SMA', 'DIFF') e dei segnali ('Signal').
+              La colonna 'Signal' contiene:
+              1 per segnale di entrata LONG
+              -1 per segnale di entrata SHORT
+              0 per nessun segnale o uscita
+            - indicator_cols (list): Lista dei nomi delle colonne degli indicatori aggiunti.
+    """
+    # Assicurati che le colonne necessarie siano presenti
+    if not all(col in dati.columns for col in ['High', 'Low', 'Close']):
+        print("Errore: Il DataFrame deve contenere le colonne 'High', 'Low', 'Close'.")
+        return dati, []
+
+    # Calcola lo Stocastico utilizzando pandas_ta
+    # pandas_ta aggiunge le colonne direttamente al DataFrame
+    # Il nome delle colonne sarà basato sui periodi, ad esempio STOCHk_14_3_3, STOCHd_14_3_3
+    # Usiamo il parametro smooth_k per specificare il periodo della seconda SMA di %D
+    stoch_cols = ta.stoch(
+        high=dati['High'],
+        low=dati['Low'],
+        close=dati['Close'],
+        k=periodo_k,
+        d=periodo_d,
+        smooth_k=periodo_dd, # pandas_ta usa smooth_k per la seconda SMA di %D
+        append=True # Aggiunge le colonne al DataFrame originale
+    )
+
+    # Determina i nomi esatti delle colonne create da pandas_ta
+    k_col_name = f'STOCHk_{periodo_k}_{periodo_d}_{periodo_dd}'
+    d_col_name = f'STOCHd_{periodo_k}_{periodo_d}_{periodo_dd}' # La nostra %D è la colonna 'STOCHd' calcolata da pandas_ta
+
+    # Calcola la media mobile di %D per ottenere la nostra %DD
+    # Dobbiamo calcolare esplicitamente la media mobile della colonna STOCHd
+    if d_col_name in dati.columns:
+         dati['STOCHd_SMA'] = dati[d_col_name].rolling(window=periodo_dd).mean()
+         dd_col_name_actual = 'STOCHd_SMA' # Nome effettivo della colonna %DD
+
+         # Calcola la differenza (DIFF = %D - %DD)
+         if dd_col_name_actual in dati.columns:
+              dati['DIFF'] = dati[d_col_name] - dati[dd_col_name_actual]
+              diff_col_name = 'DIFF'
+         else:
+              print(f"Errore: Colonna '{dd_col_name_actual}' non trovata dopo il calcolo della seconda SMA di %D.")
+              dati['DIFF'] = np.nan # Usa np.nan (minuscolo) in caso di errore
+              diff_col_name = 'DIFF' # Mantieni il nome della colonna per coerenza
+    else:
+         print(f"Errore: Colonna '{d_col_name}' (%D) non trovata dopo il calcolo dello Stocastico.")
+         dati['STOCHd_SMA'] = np.nan # Usa np.nan (minuscolo)
+         dati['DIFF'] = np.nan # Usa np.nan (minuscolo)
+         diff_col_name = 'DIFF'
+
+
+    # Inizializza la colonna dei segnali a 0
+    dati['Signal'] = 0
+
+    # Implementa la logica dei segnali basata sulla differenza (DIFF)
+    # Entrata LONG: DIFF passa da negativo a positivo (crossover up 0)
+    # Condizione: DIFF attuale > 0 E DIFF precedente <= 0
+    dati.loc[
+        (dati[diff_col_name].shift(1) <= 0) & (dati[diff_col_name] > 0),
+        'Signal'
+    ] = 1
+
+    # Entrata SHORT: DIFF passa da positivo a negativo (crossover down 0)
+    # Condizione: DIFF attuale < 0 E DIFF precedente >= 0
+    dati.loc[
+        (dati[diff_col_name].shift(1) >= 0) & (dati[diff_col_name] < 0),
+        'Signal'
+    ] = -1
+
+    # Uscita LONG: DIFF passa da positivo a negativo (stessa condizione di entrata SHORT)
+    # Questo segnale viene gestito automaticamente dal backtesting engine
+    # quando una posizione LONG è aperta e si verifica un segnale -1.
+
+    # Uscita SHORT: DIFF passa da negativo a positivo (stessa condizione di entrata LONG)
+    # Questo segnale viene gestito automaticamente dal backtesting engine
+    # quando una posizione SHORT è aperta e si verifica un segnale 1.
+
+
+    # Rimuovi eventuali segnali nelle prime righe dove gli indicatori non sono calcolabili
+    # a causa dei periodi delle medie mobili.
+    min_period = max(periodo_k, periodo_d, periodo_dd)
+    # Trova l'indice numerico corrispondente alla data min_period barre dopo l'inizio
+    # Assicurati che l'indice esista nel DataFrame
+    if min_period < len(dati):
+        dati.loc[dati.index[:min_period], 'Signal'] = 0
+
+
+    # Definisci le colonne degli indicatori da includere nel grafico
+    indicator_cols = [k_col_name, d_col_name, dd_col_name_actual, diff_col_name] # Includi %K, %D, %DD e DIFF
+
+    return dati, indicator_cols
+
+# Definizione dei parametri della strategia per la UI e l'ottimizzazione
+def get_strategy_parameters() -> dict:
+    """
+    Restituisce un dizionario che definisce i parametri configurabili
+    della strategia Stocastico con DIFF.
+    """
+    return {
+        'periodo_k': {
+            'label': 'Periodo %K',
+            'type': 'number',
+            'default': 14,
+            'min_value': 1,
+            'step': 1,
+            'format': '%d'
+        },
+        'periodo_d': {
+            'label': 'Periodo %D (SMA di %K)',
+            'type': 'number',
+            'default': 3,
+            'min_value': 1,
+            'step': 1,
+            'format': '%d'
+        },
+        'periodo_dd': {
+            'label': 'Periodo %DD (SMA di %D)',
+            'type': 'number',
+            'default': 3,
+            'min_value': 1,
+            'step': 1,
+            'format': '%d'
+        }
+    }
+
+# --- Esempio di utilizzo (per test locale) ---
+# if __name__ == '__main__':
+#     print("Esecuzione test locale della strategia Stocastico con DIFF...")
+#     # Crea dati fittizi per il test
+#     dates = pd.date_range(start='2020-01-01', periods=100, freq='D')
+#     data_test = pd.DataFrame({
+#         'Open': np.random.rand(100)*10 + 100,
+#         'High': np.random.rand(100)*10 + 105,
+#         'Low': np.random.rand(100)*10 + 95,
+#         'Close': np.random.rand(100)*10 + 100,
+#         'Volume': np.random.rand(100) * 100000
+#     }, index=dates)
+#
+#     # Aggiungi un trend per rendere i dati più realistici
+#     data_test['Close'] = data_test['Close'].cumsum() + 100
+#     data_test['Open'] = data_test['Close'].shift(1)
+#     data_test['High'] = data_test[['Open', 'Close']].max(axis=1) + np.random.rand(100)*5
+#     data_test['Low'] = data_test[['Open', 'Close']].min(axis=1) - np.random.rand(100)*5
+#     data_test = data_test.dropna() # Rimuovi la prima riga con NaN
+#
+#     print("Dati di test:")
+#     print(data_test.head())
+#
+#     # Esegui la generazione dei segnali
+#     dati_con_segnali, indicator_cols = generate_signals(data_test.copy(), periodo_k=14, periodo_d=3, periodo_dd=3)
+#
+#     print("\nDati con segnali e indicatori:")
+#     print(dati_con_segnali.tail())
+#
+#     print("\nColonne indicatori:")
+#     print(indicator_cols)
+#
+#     # Puoi visualizzare il grafico se hai le funzioni di plotting disponibili
+#     # Ad esempio, se hai una funzione plot_strategy_signals(dati, indicator_cols):
+#     # try:
+#     #     from utils.plotting_utils import plot_strategy_signals
+#     #     plot_strategy_signals(dati_con_segnali, indicator_cols)
+#     # except ImportError:
+#     #     print("\nFunzione di plotting non trovata. Salta la visualizzazione del grafico.")
+
+
+----------------------------------------------------------------------------------------------------------------------
+
+
+ Borsa2_app/pages/2_Testa_Strategie.py
+
+import streamlit as st
+import pandas as pd
+import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# IMPORTS
+from utils.strategies_config import STRATEGIE_DISPONIBILI, NOMI_STRATEGIE
+from utils.importazione_dati import download_stock_data, get_ticker_list_for_selection
+from utils.backtesting_engine import run_backtest # Questa funzione NON verrà modificata
+
+# --- FUNZIONE HELPER LOCALE: extract_symbol_from_display_string (NON MODIFICATA) ---
+def extract_symbol_from_display_string(selected_string: str) -> str:
+    """
+    Estrae il simbolo puro (es. 'AAPL') da una stringa display (es. 'AAPL - Apple Inc.').
+    """
+    if selected_string and ' - ' in selected_string:
+        return selected_string.split(' - ')[0].strip()
+    return selected_string.strip()
+
+# --- FUNZIONE LOCALE PER GENERARE IL GRAFICO: generate_price_and_signal_chart (DEVE ESSERE PRESENTE PER INTERO) ---
+# Copia e incolla qui la funzione generate_price_and_signal_chart esattamente come l'abbiamo definita
+# nelle risposte precedenti.
+# Per brevità, non la incollo di nuovo interamente qui. Assicurati che sia completa e corretta.
+def generate_price_and_signal_chart(df_data_processed: pd.DataFrame, 
+                                     price_chart_type: str, 
+                                     strategy_name: str, 
+                                     capital_curve: pd.Series = None):
+    
+    if df_data_processed.empty:
+        return go.Figure()
+
+    if not isinstance(df_data_processed.index, pd.DatetimeIndex):
+        try:
+            df_data_processed.index = pd.to_datetime(df_data_processed.index)
+        except Exception as e:
+            st.error(f"Errore nella conversione dell'indice a DatetimeIndex per il grafico: {e}")
+            return go.Figure()
+
+    required_ohlcv = ['OPEN', 'HIGH', 'LOW', 'CLOSE']
+    if not all(col in df_data_processed.columns for col in required_ohlcv):
+        st.error(f"Colonne OHLCV mancanti in df_data_processed per il grafico: {', '.join([col for col in required_ohlcv if col not in df_data_processed.columns])}")
+        return go.Figure()
+
+    show_volume = 'VOLUME' in df_data_processed.columns and not df_data_processed['VOLUME'].empty
+    rows = 2 if show_volume else 1
+    
+    specs = [[{"secondary_y": True}]] 
+    if show_volume:
+        specs.append([{"secondary_y": False}]) 
+
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
+                        vertical_spacing=0.05,
+                        row_heights=[0.75, 0.25] if show_volume else [1.0],
+                        specs=specs)
+
+    if price_chart_type == "Candlestick":
+        fig.add_trace(go.Candlestick(x=df_data_processed.index,
+                                     open=df_data_processed['OPEN'],
+                                     high=df_data_processed['HIGH'],
+                                     low=df_data_processed['LOW'],
+                                     close=df_data_processed['CLOSE'],
+                                     name='Prezzo'),
+                      row=1, col=1, secondary_y=False)
+    elif price_chart_type == "Linea di Chiusura":
+        fig.add_trace(go.Scatter(x=df_data_processed.index,
+                                 y=df_data_processed['CLOSE'],
+                                 mode='lines',
+                                 name='Prezzo di Chiusura',
+                                 line=dict(color='orange', width=2)),
+                      row=1, col=1, secondary_y=False)
+    else:
+        st.error(f"Tipo di grafico prezzo non riconosciuto: {price_chart_type}")
+        return go.Figure()
+
+    signal_colors = {
+        'long_entry': {'symbol': 'triangle-up', 'color': 'green', 'name': 'Buy Signal', 'offset': 0.99},
+        'long_exit': {'symbol': 'triangle-down', 'color': 'red', 'name': 'Sell Signal', 'offset': 1.01},
+        'short_entry': {'symbol': 'triangle-down', 'color': 'orange', 'name': 'Short Signal', 'offset': 1.01},
+        'short_exit': {'symbol': 'triangle-up', 'color': 'purple', 'name': 'Cover Signal', 'offset': 0.99}
+    }
+
+    for signal_col, props in signal_colors.items():
+        if signal_col in df_data_processed.columns and not df_data_processed[signal_col].empty and df_data_processed[signal_col].any():
+            y_offset_col = df_data_processed['LOW'] if props['symbol'] == 'triangle-up' else df_data_processed['HIGH']
+            
+            fig.add_trace(go.Scatter(x=df_data_processed.index[df_data_processed[signal_col]],
+                                     y=y_offset_col[df_data_processed[signal_col]] * props['offset'],
+                                     mode='markers',
+                                     marker=dict(symbol=props['symbol'], size=10, color=props['color']),
+                                     name=props['name']),
+                          row=1, col=1, secondary_y=False)
+
+    if capital_curve is not None and not capital_curve.empty:
+        if not isinstance(capital_curve.index, pd.DatetimeIndex):
+            try:
+                capital_curve.index = pd.to_datetime(capital_curve.index)
+            except Exception as e:
+                st.error(f"Errore nella conversione dell'indice di capital_curve a DatetimeIndex: {e}")
+        
+        if not capital_curve.empty:
+            fig.add_trace(go.Scatter(x=capital_curve.index, y=capital_curve, mode='lines',
+                                     line=dict(color='blue', width=2),
+                                     name='Curva Capitale', yaxis='y2'),
+                          row=1, col=1, secondary_y=True)
+        else:
+            st.warning("Curva capitale vuota dopo la conversione dell'indice.")
+            
+    if show_volume:
+        fig.add_trace(go.Bar(x=df_data_processed.index, y=df_data_processed['VOLUME'], name='Volume',
+                             marker_color='rgba(0,0,255,0.3)'),
+                      row=2, col=1)
+
+    fig.update_layout(
+        title_text=f"{strategy_name} - {df_data_processed.index.min().strftime('%Y-%m-%d')} a {df_data_processed.index.max().strftime('%Y-%m-%d')}",
+        xaxis_rangeslider_visible=False,
+        xaxis_title="Data",
+        yaxis_title="Prezzo",
+        yaxis2_title="Capitale",
+        template="plotly_white",
+        height=700
+    )
+
+    if show_volume:
+        fig.update_layout(xaxis2_rangeslider_visible=False)
+
+    fig.update_xaxes(
+        rangebreaks=[
+            dict(bounds=["sat", "mon"]),
+        ]
+    )
+
+    return fig
+# --- FINE FUNZIONE LOCALE PER GENERARE IL GRAFICO ---
+
+
+# --- INIZIALIZZAZIONE st.session_state ---
+if 'df_data' not in st.session_state:
+    st.session_state['df_data'] = pd.DataFrame()
+if 'backtest_executed' not in st.session_state:
+    st.session_state['backtest_executed'] = False
+if 'backtest_results' not in st.session_state:
+    st.session_state['backtest_results'] = {}
+
+
+st.title("📊 Testa Strategie di Trading")
+st.markdown("Seleziona un titolo, un periodo e configura le opzioni per eseguire un backtest.")
+
+# --- SEZIONE PER LA SCELTA DEL TITOLO E DEL PERIODO (sidebar) ---
+st.sidebar.header("Configurazione Dati Storici") 
+
+ticker_options = get_ticker_list_for_selection()
+
+if not ticker_options:
+    st.sidebar.error("Impossibile caricare i simboli dei titoli. Controlla il file 'tickers.csv' e il log di Streamlit.")
+    st.stop()
+
+selected_ticker_display = st.sidebar.selectbox(
+    "Seleziona un Titolo:",
+    ticker_options,
+    index=0
+)
+
+simbolo_titolo = extract_symbol_from_display_string(selected_ticker_display)
+
+if not simbolo_titolo:
+    st.sidebar.warning("Nessuno simbolo del titolo valido selezionato o estratto. Verifica la selezione.")
+    st.stop()
+
+st.sidebar.subheader("Periodo Storico")
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    data_inizio = st.date_input("Data Inizio", datetime.date(2023, 1, 1))
+with col2:
+    data_fine = st.date_input("Data Fine", datetime.date.today())
+
+# --- OPZIONE GRAFICO PREZZO (subito prima del pulsante "Carica Dati") ---
+st.sidebar.header("Opzioni Visualizzazione Dati") 
+price_chart_type = st.sidebar.radio(
+    "Tipo di grafico per dati:",
+    ("Candlestick", "Linea di Chiusura"),
+    key="price_chart_type_select_initial"
+)
+
+# --- PULSANTE CARICA DATI (sidebar) ---
+if st.sidebar.button("Carica Dati"):
+    if data_inizio >= data_fine:
+        st.sidebar.error("La data di inizio deve essere precedente alla data di fine per caricare i dati.")
+    else:
+        with st.spinner(f"Caricamento dati per **{simbolo_titolo}** dal {data_inizio} al {data_fine}..."):
+            st.info(f"Caricamento dati per: **{simbolo_titolo}**")
+
+            try:
+                raw_df_data = download_stock_data(simbolo_titolo, data_inizio, data_fine)
+
+                if raw_df_data.empty:
+                    st.warning(f"Nessun dato trovato per {simbolo_titolo} nel periodo specificato ({data_inizio} a {data_fine}).")
+                    st.session_state['df_data'] = pd.DataFrame() 
+                else:
+                    # --- LOGICA DI PULIZIA E NORMALIZZAZIONE DEL DATAFRAME ---
+                    if isinstance(raw_df_data.columns, pd.MultiIndex):
+                        raw_df_data.columns = raw_df_data.columns.get_level_values(0)
+                    
+                    raw_df_data.columns = [col.upper().replace(' ', '') for col in raw_df_data.columns]
+
+                    if 'ADJCLOSE' in raw_df_data.columns and 'CLOSE' not in raw_df_data.columns:
+                        raw_df_data.rename(columns={'ADJCLOSE': 'CLOSE'}, inplace=True)
+                    
+                    required_cols_upper = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
+                    actual_cols_to_keep = [col for col in required_cols_upper if col in raw_df_data.columns]
+                    
+                    if not actual_cols_to_keep:
+                        st.error(f"Dati incompleti: Nessuna delle colonne essenziali OHLCV (OPEN, HIGH, LOW, CLOSE) è stata trovata nei dati scaricati. Colonne disponibili: {', '.join(raw_df_data.columns)}")
+                        st.session_state['df_data'] = pd.DataFrame()
+                    else:
+                        temp_df_for_session = raw_df_data[actual_cols_to_keep].copy() 
+                        
+                        if temp_df_for_session.empty:
+                            st.warning("I dati sono stati processati ma sono risultati vuoti per l'analisi.")
+                            st.session_state['df_data'] = pd.DataFrame()
+                        else:
+                            st.sidebar.success(f"Dati caricati e processati per {len(temp_df_for_session)} candele.")
+                            st.session_state['df_data'] = temp_df_for_session
+                        
+                st.session_state['backtest_executed'] = False 
+                st.session_state['backtest_results'] = {}
+                st.session_state['selected_strategy_name'] = ""
+                st.rerun() 
+
+            except Exception as e:
+                st.sidebar.error(f"Errore durante il caricamento o la pulizia dei dati: {e}")
+                st.exception(e)
+                st.session_state['df_data'] = pd.DataFrame()
+                st.session_state['backtest_executed'] = False
+
+
+# --- VISUALIZZAZIONE DATI E SEZIONE BACKTEST (corpo principale della pagina) ---
+df_data = st.session_state['df_data'] 
+
+if not df_data.empty:
+    st.subheader(f"Dati Storici per {simbolo_titolo}")
+
+    # --- TABELLA DATI GREZZI (Prima del grafico come richiesto) ---
+    st.write("### Dati Grezzi (Tutti i record)")
+    
+    cols_to_display = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
+    actual_cols_to_display = [col for col in cols_to_display if col in df_data.columns]
+
+    if actual_cols_to_display:
+        df_display_table = df_data[actual_cols_to_display].copy()
+        
+        if isinstance(df_display_table.index, pd.DatetimeIndex):
+            df_display_table.index = df_display_table.index.strftime('%Y-%m-%d')
+        else:
+            st.warning("L'indice del DataFrame per la tabella non è di tipo DatetimeIndex. La formattazione della data potrebbe non essere applicata correttamente.")
+
+        st.dataframe(df_display_table.style.format("{:.2f}"))
+    else:
+        st.warning("Le colonne OHLCV richieste per la visualizzazione della tabella non sono disponibili.")
+    
+    # --- GRAFICO DEI DATI CARICATI (iniziale, pulito - Ora dopo la tabella) ---
+    st.write("### Grafico Dati Caricati")
+    fig_initial = generate_price_and_signal_chart(
+        df_data_processed=df_data.copy(), 
+        price_chart_type=price_chart_type,
+        strategy_name=f"Dati Storici {simbolo_titolo}",
+        capital_curve=None 
+    )
+    st.plotly_chart(fig_initial, use_container_width=True)
+    
+    st.markdown("---") # Separatore visivo
+
+    # --- SEZIONE PER IL BACKTEST DELLA STRATEGIA ---
+    st.header("Configurazione e Esecuzione Backtest")
+
+    st.subheader("Parametri di Capitale e Trading")
+    col_init_1, col_init_2 = st.columns(2)
+    with col_init_1:
+        # Qui useremo il valore assoluto per il capitale iniziale
+        initial_capital = st.number_input(
+            "Capitale Iniziale (€)",
+            min_value=100.0, value=10000.0, step=100.0,
+            help="Il capitale con cui iniziare il backtest."
+        )
+    with col_init_2:
+        # Ora, per l'investimento per trade, se la tua run_backtest si aspetta un valore assoluto
+        # dobbiamo fornirgli un valore assoluto.
+        # Possiamo avere un input percentuale e convertirlo, oppure un input diretto in euro.
+        # Dato che la tua run_backtest non ha un parametro per "investment_per_trade_perc",
+        # la assumiamo che la logica di dimensionamento del trade sia interna alla strategia
+        # o venga calcolata direttamente dal capitale_iniziale in base a una logica fissa.
+        # Se invece vuoi un input diretto in Euro, cambieresti questo in st.number_input:
+        
+        # Modo 1: Input % (se run_backtest lo gestisce o se la logica di trade sizing è altrove)
+        # investment_per_trade_perc = st.slider(
+        #     "Investimento per Trade (%)",
+        #     min_value=1.0, max_value=100.0, value=10.0, step=1.0,
+        #     help="Percentuale del capitale disponibile da investire per ogni singolo trade. Questa verrà poi tradotta in un valore assoluto dalla strategia/motore di backtest."
+        # )
+        
+        # Modo 2: Input in Euro (se run_backtest vuole un valore fisso per trade)
+        # Se la tua run_backtest non ha un parametro esplicito per "investimento per trade",
+        # allora questo input non verrebbe passato direttamente.
+        # Se invece la tua run_backtest ha un parametro come "trade_size_absolute",
+        # allora lo useresti qui.
+        # Per ora, dato che run_backtest non ha un parametro esplicito per l'investimento per trade,
+        # non lo aggiungerò qui. Se hai bisogno di questo parametro esplicitamente,
+        # fammelo sapere e lo integreremo, ma dovrai modificare run_backtest.
+        pass # Rimosso l'investimento per trade per ora, in quanto non è un parametro di run_backtest
+
+
+    col_trade_1, col_trade_2 = st.columns(2)
+    with col_trade_1:
+        abilita_short = st.checkbox(
+            "Abilita Trading Short",
+            value=False,
+            help="Consente alla strategia di aprire posizioni short."
+        )
+    with col_trade_2:
+        commissione_percentuale = st.slider(
+            "Commissione per Trade (%)",
+            min_value=0.0, max_value=1.0, value=0.05, step=0.01,
+            help="Percentuale di commissione applicata per ogni trade (acquisto/vendita)."
+        )
+
+    st.subheader("Gestione del Rischio")
+    enable_risk_management = st.checkbox(
+        "Abilita Gestione del Rischio",
+        value=False,
+        help="Attiva le opzioni di Stop Loss, Stop Profit e Trailing Stop."
+    )
+
+    # Inizializziamo i valori degli stop a None se la gestione del rischio non è abilitata
+    # Questo è coerente con la firma della tua funzione run_backtest
+    stop_loss_perc = None
+    stop_profit_perc = None
+    trailing_stop_perc = None
+
+    if enable_risk_management:
+        col_risk_1, col_risk_2, col_risk_3 = st.columns(3)
+        with col_risk_1:
+            stop_loss_perc = st.slider(
+                "Stop Loss (%)",
+                min_value=0.0, max_value=10.0, value=2.0, step=0.1,
+                help="Percentuale di perdita massima accettabile per trade."
+            )
+        with col_risk_2:
+            stop_profit_perc = st.slider(
+                "Stop Profit (%)",
+                min_value=0.0, max_value=20.0, value=5.0, step=0.1,
+                help="Percentuale di profitto desiderata per trade."
+            )
+        with col_risk_3:
+            trailing_stop_perc = st.slider(
+                "Trailing Stop (%)",
+                min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+                help="Percentuale di trailing stop. La posizione viene chiusa se il prezzo scende del X% dal suo massimo."
+            )
+    else:
+        st.info("La gestione del rischio è disabilitata. Stop Loss, Stop Profit e Trailing Stop non verranno applicati.")
+
+
+    st.subheader("Selezione Strategia")
+    selected_strategy_name = st.selectbox(
+        "Scegli la Strategia da Testare:",
+        NOMI_STRATEGIE,
+        key="strategy_select_main"
+    )
+
+    if st.button("Esegui Backtest Strategia", key="run_backtest_btn"):
+        strategy_func = STRATEGIE_DISPONIBILI[selected_strategy_name]
+        with st.spinner(f"Esecuzione backtest per {selected_strategy_name} su {simbolo_titolo}..."):
+            # CHIAMATA A run_backtest CON I PARAMETRI ESATTI CHE SI ASPETTA
+            # La tua funzione run_backtest non ha un parametro per l'investimento per trade
+            # a meno che non sia gestito internamente o tramite 'dati' o 'strategia_func'.
+            # Qui passiamo i parametri come definiti nella tua run_backtest.
+            backtest_raw_results = run_backtest(
+                dati=df_data.copy(), # Assumendo che 'dati' sia il parametro per il DataFrame
+                capitale_iniziale=initial_capital,
+                commissione_percentuale=commissione_percentuale,
+                abilita_short=abilita_short,
+                stop_loss_percent=stop_loss_perc,
+                take_profit_percent=stop_profit_perc, # Assumo che stop_profit_perc corrisponda a take_profit_percent
+                trailing_stop_percent=trailing_stop_perc
+            )
+            
+            # GESTIONE DEI RISULTATI DI run_backtest
+            # Assumiamo che run_backtest restituisca un dizionario o una tupla dove il primo elemento è il dizionario.
+            # La tua firma indica una tupla di 4 elementi, il dizionario dei risultati è probabile sia l'ultimo.
+            if isinstance(backtest_raw_results, dict):
+                results = backtest_raw_results
+            elif isinstance(backtest_raw_results, tuple):
+                # Cerchiamo il dizionario all'interno della tupla. 
+                # Dalla tua firma `-> tuple[list, pd.Series, pd.Series, dict]:`
+                # il dizionario dei risultati è l'ultimo elemento.
+                if len(backtest_raw_results) > 3 and isinstance(backtest_raw_results[3], dict):
+                    results = backtest_raw_results[3] # Prende l'ultimo elemento della tupla
+                    st.success("Risultati backtest estratti con successo dalla tupla.")
+                else:
+                    st.error(f"Formato tupla risultati di run_backtest non riconosciuto. Tupla: {backtest_raw_results}. Assicurati che il dizionario dei risultati sia il quarto elemento (indice 3).")
+                    results = {} # Imposta a dizionario vuoto per evitare ulteriori errori
+            else:
+                st.error(f"Formato risultati di run_backtest non riconosciuto. Tipo: {type(backtest_raw_results)}. Assicurati che run_backtest restituisca un dizionario o una tupla.")
+                results = {} 
+
+            if results and not results.get('df_trades', pd.DataFrame()).empty:
+                st.session_state['backtest_executed'] = True
+                st.session_state['backtest_results'] = results
+                st.session_state['selected_strategy_name'] = selected_strategy_name
+                st.rerun() 
+            else:
+                st.warning("Il backtest non ha prodotto risultati validi o nessun trade generato. Assicurati che i parametri siano corretti e che la strategia generi trades.")
+                st.session_state['backtest_executed'] = False
+                st.session_state['backtest_results'] = {} 
+                st.session_state['selected_strategy_name'] = ""
+
+    # --- VISUALIZZA I RISULTATI DEL BACKTEST DOPO L'ESECUZIONE ---
+    if st.session_state['backtest_executed'] and st.session_state['backtest_results']:
+        st.markdown("---")
+        st.subheader(f"Risultati Riepilogo Backtest: {st.session_state['selected_strategy_name']}")
+        results = st.session_state['backtest_results']
+
+        st.write(f"Capitale Finale: **{results.get('final_capital', 'N/A'):.2f} €**") 
+        st.write(f"Profitto Totale: **{results.get('total_profit', 'N/A'):.2f} €**") 
+        st.write(f"Numero di Trades: **{results.get('num_trades', 'N/A')}**")
+        st.write(f"Percentuale di Vittorie: **{results.get('win_rate', 'N/A'):.2f}%**")
+        st.write(f"Drawdown Massimo: **{results.get('max_drawdown', 'N/A'):.2f}%**")
+
+        if 'df_trades' in results and not results['df_trades'].empty:
+            st.subheader("Grafico Dettagliato con Segnali e Curva Capitale")
+            
+            fig_backtest = generate_price_and_signal_chart(
+                df_data_processed=results['df_trades'],
+                price_chart_type=price_chart_type, 
+                strategy_name=f"{st.session_state['selected_strategy_name']} - {simbolo_titolo}",
+                capital_curve=results.get('capital_curve', None)
+            )
+            st.plotly_chart(fig_backtest, use_container_width=True)
+
+            st.subheader("Dettagli Trades (Prime 5 Righe)")
+            st.dataframe(results['df_trades'].head())
+        else:
+            st.warning("Nessun trade generato per la strategia selezionata o i dati sono vuoti per il plot. Verifica se la strategia è stata eseguita e ha prodotto risultati.")
+
+else:
+    st.info("Carica i dati storici dal pannello laterale per iniziare a testare le strategie.")
+
+
+
+
+
+

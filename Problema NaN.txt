@@ -1,0 +1,58 @@
+cannot import name 'NaN' from 'numpy' 
+
+Questo significa che il problema non è nella tua configurazione generale di Python o negli ambienti virtuali (che ora sembrano funzionare correttamente con Python 3.12), ma è una incompatibilità specifica all'interno del codice di pandas_ta con le versioni più recenti di numpy (o con Python 3.12 che gestisce diversamente le importazioni da numpy).
+
+numpy non espone più NaN direttamente per l'importazione in quel modo. Dovrebbe essere numpy.nan.
+Soluzione: Modifica Diretta del File pandas_ta (Soluzione Rapida e Temporanea)
+
+Questa è una soluzione "hacky" ma ti permetterà di procedere immediatamente con il tuo progetto. È temporanea perché se reinstalli pandas_ta o aggiorni la libreria, la modifica verrà sovrascritta.
+
+    Naviga alla directory del file problematico:
+    Copia il percorso esatto dal traceback:
+    C:\Users\Casa\AppData\Local\Programs\Python\Python312\Lib\site-packages\pandas_ta\momentum\
+
+    Apri Esplora File (o il tuo gestore file) e vai a questa cartella.
+
+    Apri il file squeeze_pro.py:
+    Trova il file squeeze_pro.py in quella cartella e aprilo con un editor di testo (come Blocco Note, Notepad++, o direttamente in Visual Studio Code).
+
+    Modifica la riga incriminata:
+    Trova la riga 2:
+    Python
+
+from numpy import NaN as npNaN
+
+Cambiala in:
+Python
+
+import numpy as np
+
+Trova e sostituisci npNaN con np.nan:
+Ora, all'interno dello stesso file squeeze_pro.py, cerca tutte le occorrenze di npNaN e sostituiscile con np.nan.
+Dovrebbe esserci almeno un'occorrenza, probabilmente nella definizione della funzione o nel suo utilizzo. Ad esempio, potresti trovare qualcosa come:
+Python
+
+# Esempio di codice che potresti trovare
+result = npNaN
+
+Cambialo in:
+Python
+
+    # Esempio di codice modificato
+    result = np.nan
+
+    Salva il file squeeze_pro.py dopo aver fatto queste modifiche.
+
+Spiegazione della Modifica:
+
+    from numpy import NaN as npNaN: Questo tentativo di importazione fallisce perché NaN non è più esposto direttamente come un nome importabile dal modulo numpy.
+    import numpy as np: Questo importa l'intero modulo numpy con l'alias convenzionale np.
+    np.nan: Questa è la forma corretta e moderna per accedere al valore "Not a Number" di NumPy.
+
+Cosa fare dopo (Importante):
+
+    Testa l'applicazione: Dopo aver salvato il file modificato, riavvia la tua applicazione Streamlit (streamlit run Homepage.py). Se questa era l'unica incompatibilità, l'app dovrebbe ora avviarsi e funzionare.
+    Segnala il bug (Opzionale ma utile): Potresti considerare di segnalare questo bug al repository GitHub di pandas_ta. Questo aiuta gli sviluppatori a risolvere il problema in una futura versione della libreria.
+    Monitora gli aggiornamenti di pandas_ta: Quando in futuro aggiornerai le tue librerie, controlla se pandas_ta ha rilasciato una nuova versione che risolve questo problema. Se lo fa, puoi rimuovere la tua modifica manuale.
+
+Mi scuso per il disagio causato da questa incompatibilità di libreria. Spero che questa soluzione ti permetta finalmente di far funzionare il tuo progetto!

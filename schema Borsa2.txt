@@ -1,0 +1,17 @@
+Borsa2_app\
+utils\
+	__init__.py
+	importazione_dati.py
+	calcolo_inidcatori\
+		sma.py
+		ema.py
+		roc.py
+		rsi.py
+		stocastico.py
+		bollinger.py
+		cci,py
+pages\
+	__init__.py
+	1_Analisi_Tecnica.py
+venv\
+Homepage.py

@@ -1,0 +1,848 @@
+# Borsa2_app/pages/1_Analisi_Tecnica.py
+
+import streamlit as st
+import pandas as pd
+import numpy as np # Anche se non usato direttamente per indicatori, puoi mantenerlo se ti serve altrove
+import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import sys
+import os
+
+# Assicurati che il percorso radice del progetto sia nel sys.path
+# Questo è fondamentale per importare correttamente da 'utils'
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Importa le funzioni dai moduli di utilità
+from utils.importazione_dati import load_tickers_from_csv, download_stock_data, get_ticker_list_for_selection, extract_symbol_from_selection
+# Importa le funzioni degli indicatori
+from utils.calcolo_indicatori import calculate_sma, calculate_ema, calculate_rsi, calculate_stochastic
+
+# --- Configurazione della pagina Streamlit ---
+st.set_page_config(
+    page_title="Analisi Tecnica",
+    page_icon="📊",
+    layout="wide"
+)
+
+st.title("📊 Analisi Tecnica dei Titoli Azionari")
+st.markdown("Seleziona un titolo e un intervallo di date per visualizzare i dati storici e gli indicatori.")
+
+# --- Caricamento dei ticker disponibili dal CSV ---
+tickers_file_path = "tickers.csv" # Assicurati che questo percorso sia corretto rispetto a dove esegui l'app
+available_tickers_display = get_ticker_list_for_selection(tickers_file_path)
+
+if not available_tickers_display:
+    st.error("Impossibile caricare i simboli dei titoli dal file 'tickers.csv'. Assicurati che il file esista e sia formattato correttamente nella root del progetto.")
+    st.stop() # Ferma l'esecuzione se non ci sono ticker da selezionare
+
+# --- Sidebar per l'input utente ---
+st.sidebar.header("Impostazioni Titolo e Periodo")
+
+# Selezione del titolo azionario
+selected_ticker_display = st.sidebar.selectbox(
+    "Seleziona un titolo:",
+    options=available_tickers_display,
+    key="ticker_select" # Aggiunto un key per gestire il widget nello stato di Streamlit
+)
+
+# Estrai il simbolo effettivo dal display string
+selected_ticker_symbol = extract_symbol_from_selection(selected_ticker_display)
+
+# Selezione del periodo di date
+today = datetime.date.today()
+default_start_date = today - datetime.timedelta(days=365 * 2) # Due anni fa come default
+
+col1, col2 = st.sidebar.columns(2)
+start_date = col1.date_input("Data Inizio", value=default_start_date, key="start_date_input")
+end_date = col2.date_input("Data Fine", value=today, key="end_date_input")
+
+if start_date >= end_date:
+    st.sidebar.error("La data di inizio deve essere precedente alla data di fine.")
+    # Non st.stop() qui, permettiamo all'utente di correggere senza ricaricare
+    # Potresti voler disabilitare l'interazione per gli indicatori finché non è valido
+
+# --- Logica di caricamento dati (Spostato fuori dal bottone per reattività) ---
+df_data = None
+if selected_ticker_symbol and start_date < end_date:
+    # Aggiungi un messaggio di caricamento
+    with st.spinner(f"Caricamento dati per {selected_ticker_symbol} dal {start_date} al {end_date}..."):
+        df_data = download_stock_data(selected_ticker_symbol, start_date, end_date)
+
+    if df_data is not None and not df_data.empty:
+        # --- Gestione del MultiIndex e standardizzazione dei nomi delle colonne ---
+        if isinstance(df_data.columns, pd.MultiIndex):
+            df_data.columns = df_data.columns.get_level_values(0)
+        
+        # Standardizza i nomi delle colonne: converti in maiuscolo e rimuovi spazi
+        df_data.columns = [col.upper().replace(' ', '') for col in df_data.columns]
+
+        # Rinomina 'ADJCLOSE' in 'CLOSE' se presente
+        if 'ADJCLOSE' in df_data.columns and 'CLOSE' not in df_data.columns:
+            df_data.rename(columns={'ADJCLOSE': 'CLOSE'}, inplace=True)
+        
+        required_cols_upper = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
+        missing_cols = [col for col in required_cols_upper if col not in df_data.columns]
+        if missing_cols:
+            st.error(f"Dati mancanti: le seguenti colonne necessarie non sono state trovate nel DataFrame dopo la standardizzazione: {', '.join(missing_cols)}. Colonne disponibili: {', '.join(df_data.columns)}")
+            df_data = None # Imposta df_data a None per evitare errori a cascata
+    else:
+        st.warning(f"Nessun dato disponibile per {selected_ticker_symbol} nel periodo selezionato.")
+        df_data = None # Imposta df_data a None per evitare errori a cascata
+
+# --- Blocco principale dell'applicazione solo se i dati sono stati caricati con successo ---
+if df_data is not None and not df_data.empty:
+    st.subheader(f"Dati Storici per {selected_ticker_symbol}")
+
+    # --- Tabella Dati Grezzi ---
+    st.write("### Dati Grezzi (Ultimi 100)")
+    # Mostra solo le colonne OHLCV (usando i nomi standardizzati in maiuscolo)
+    cols_to_display = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']
+    df_display_table = df_data[cols_to_display].tail(100).copy()
+    df_display_table.index = df_display_table.index.strftime('%Y-%m-%d')
+    st.dataframe(df_display_table.style.format("{:.2f}"))
+
+    st.markdown("---")
+    st.subheader("Configurazione e Visualizzazione Indicatori Tecnici")
+
+    # --- Sezione di Selezione e Parametri Indicatori ---
+    # Definisce gli indicatori disponibili e i loro parametri di default
+    # Aggiunto 'plot_type' per controllare il rendering (overlay sul prezzo o subplot separato)
+    available_indicators = {
+        "SMA": {"func": calculate_sma, "params": {"period": 20}, "plot_type": "overlay"},
+        "EMA": {"func": calculate_ema, "params": {"period": 20}, "plot_type": "overlay"},
+        "RSI": {"func": calculate_rsi, "params": {"period": 14}, "plot_type": "separate"},
+        "Stocastico": {"func": calculate_stochastic, "params": {"k_period": 14, "d_period": 3}, "plot_type": "separate"},
+        # Aggiungi qui gli altri indicatori con i loro parametri e tipo di plot
+    }
+
+    st.sidebar.header("Indicatori Tecnici")
+    selected_indicators_names = st.sidebar.multiselect(
+        "Seleziona gli indicatori (max 4)",
+        list(available_indicators.keys()),
+        default=[],
+        key="indicator_multiselect"
+    )
+
+    if len(selected_indicators_names) > 4:
+        st.sidebar.warning("Puoi selezionare un massimo di 4 indicatori.")
+        selected_indicators_names = selected_indicators_names[:4]
+
+    calculated_indicators = {}
+    indicator_subplots_names = [] # Nomi degli indicatori da plottare in subplots separati
+
+    for ind_name in selected_indicators_names:
+        st.sidebar.subheader(f"Parametri {ind_name}")
+        indicator_info = available_indicators[ind_name]
+        params = indicator_info["params"].copy() # Copia per non modificare il default
+
+        # Crea gli slider o number_input per i parametri dell'indicatore
+        for param_name, default_value in params.items():
+            params[param_name] = st.sidebar.slider(
+                f"{param_name.replace('_', ' ').title()} {ind_name}",
+                min_value=1,
+                max_value=200 if "period" in param_name else 50, # Range max diverso per periodi
+                value=default_value,
+                key=f"{ind_name}_{param_name}"
+            )
+        
+        try:
+            # Chiama la funzione dell'indicatore
+            # Gestione speciale per l'oscillatore stocastico che richiede high, low, close
+            if ind_name == "Stocastico":
+                # Assicurati che le colonne HIGH, LOW, CLOSE siano disponibili in df_data
+                if all(col in df_data.columns for col in ['HIGH', 'LOW', 'CLOSE']):
+                    calculated_value = indicator_info["func"](df_data["HIGH"], df_data["LOW"], df_data["CLOSE"], **params)
+                else:
+                    st.warning(f"Colonne HIGH, LOW o CLOSE mancanti per il calcolo dello Stocastico.")
+                    continue # Salta il calcolo di questo indicatore
+            else:
+                # Per SMA, EMA, RSI che usano solo la chiusura
+                if 'CLOSE' in df_data.columns:
+                    calculated_value = indicator_info["func"](df_data["CLOSE"], **params)
+                else:
+                    st.warning(f"Colonna CLOSE mancante per il calcolo di {ind_name}.")
+                    continue # Salta il calcolo di questo indicatore
+
+            calculated_indicators[ind_name] = calculated_value
+            if indicator_info["plot_type"] == "separate":
+                indicator_subplots_names.append(ind_name)
+
+        except Exception as e:
+            st.error(f"Errore nel calcolo di {ind_name}: {e}")
+            st.exception(e) # Mostra i dettagli dell'errore per il debug
+
+    # --- Plotting dei Prezzi e Indicatori ---
+    num_indicator_subplots = len(indicator_subplots_names)
+    total_rows = 1 + num_indicator_subplots # 1 per il prezzo/volume, il resto per gli indicatori separati
+
+    # Definisce le altezze delle righe per i subplots
+    # Prima riga (prezzo + volume) più grande, il resto equamente distribuiti
+    row_heights_list = [0.5] # Altezza per il plot del prezzo/volume
+    if num_indicator_subplots > 0:
+        row_heights_list.extend([(0.5 / num_indicator_subplots) for _ in range(num_indicator_subplots)])
+
+    fig = make_subplots(
+        rows=total_rows,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05, # Riduci lo spazio verticale
+        row_heights=row_heights_list
+    )
+
+    # Plot del prezzo (candlestick)
+    fig.add_trace(go.Candlestick(x=df_data.index,
+                                 open=df_data['OPEN'],
+                                 high=df_data['HIGH'],
+                                 low=df_data['LOW'],
+                                 close=df_data['CLOSE'],
+                                 name='Prezzo'), row=1, col=1)
+
+    # Aggiungi gli indicatori che si sovrappongono al plot del prezzo (es. medie mobili)
+    for ind_name in selected_indicators_names:
+        indicator_info = available_indicators.get(ind_name)
+        if indicator_info and indicator_info["plot_type"] == "overlay" and ind_name in calculated_indicators:
+            fig.add_trace(go.Scatter(
+                x=calculated_indicators[ind_name].index,
+                y=calculated_indicators[ind_name],
+                mode='lines',
+                name=f'{ind_name} ({indicator_info["params"].get("period", "")})', # Mostra il periodo
+                line=dict(width=1)
+            ), row=1, col=1)
+
+    # Plot dei Volumi (aggiunto come Bar Plot sullo stesso subplot del prezzo, ma con asse Y secondario)
+    # Questa parte richiede un asse Y secondario per il volume se vuoi sovrapporlo al prezzo
+    # oppure puoi mantenere il volume nel suo subplot separato come era prima (in questo caso la riga 1 avrà solo il prezzo)
+    # Per semplicità e coerenza con l'esempio precedente, ho mantenuto il volume separato nel plot
+    # ma ho rimosso il subplot dedicato solo al volume. Se vuoi il volume separato, devi aumentare total_rows.
+    # Per ora, si assume che il volume non sarà plottato insieme al prezzo.
+    # Se vuoi il volume di nuovo, puoi creare un terzo subplot e aggiungere la riga alla lista row_heights_list.
+
+    # Plot degli indicatori in subplots separati
+    current_row = 2
+    for ind_name in indicator_subplots_names:
+        indicator_value = calculated_indicators[ind_name]
+        indicator_info = available_indicators[ind_name]
+
+        if ind_name == "Stocastico" and isinstance(indicator_value, pd.DataFrame):
+            # Lo Stocastico restituisce un DataFrame con %K e %D
+            fig.add_trace(go.Scatter(
+                x=indicator_value.index,
+                y=indicator_value.iloc[:, 0], # Prima colonna (%K)
+                mode='lines',
+                name=f'{ind_name} %K',
+                line=dict(width=1)
+            ), row=current_row, col=1)
+            fig.add_trace(go.Scatter(
+                x=indicator_value.index,
+                y=indicator_value.iloc[:, 1], # Seconda colonna (%D)
+                mode='lines',
+                name=f'{ind_name} %D',
+                line=dict(width=1)
+            ), row=current_row, col=1)
+            fig.add_hline(y=80, line_dash="dot", line_color="red", row=current_row, col=1)
+            fig.add_hline(y=20, line_dash="dot", line_color="green", row=current_row, col=1)
+
+        elif ind_name == "RSI" and isinstance(indicator_value, pd.Series):
+            fig.add_trace(go.Scatter(
+                x=indicator_value.index,
+                y=indicator_value,
+                mode='lines',
+                name=f'{ind_name} ({indicator_info["params"].get("period", "")})',
+                line=dict(width=1)
+            ), row=current_row, col=1)
+            fig.add_hline(y=70, line_dash="dot", line_color="red", row=current_row, col=1)
+            fig.add_hline(y=30, line_dash="dot", line_color="green", row=current_row, col=1)
+        # Puoi aggiungere altri elif per altri indicatori con logiche di plotting speciali
+        else: # Tutti gli altri indicatori che restituiscono una singola serie e vanno in subplot separato
+            if isinstance(indicator_value, pd.Series):
+                fig.add_trace(go.Scatter(
+                    x=indicator_value.index,
+                    y=indicator_value,
+                    mode='lines',
+                    name=f'{ind_name} ({indicator_info["params"].get("period", "")})',
+                    line=dict(width=1)
+                ), row=current_row, col=1)
+
+
+        fig.update_yaxes(title_text=ind_name, row=current_row, col=1) # Titolo per l'asse Y di ogni indicatore
+        current_row += 1
+
+
+    fig.update_layout(
+        title_text=f'{selected_ticker_symbol} Analisi Tecnica Dettagliata',
+        xaxis_rangeslider_visible=False, # Nasconde il range slider sotto il grafico principale
+        height=800, # Altezza totale del grafico con tutti i subplots
+        margin=dict(t=50, b=0, l=0, r=0),
+        hovermode="x unified"
+    )
+
+    # Aggiorna gli assi X e Y
+    fig.update_xaxes(showgrid=True, zeroline=False, row=1, col=1) # Mostra griglia solo sul grafico principale
+    fig.update_yaxes(title_text='Prezzo', row=1, col=1, showgrid=True, zeroline=False)
+
+    # Nascondi le etichette dell'asse X per i subplots degli indicatori per un aspetto più pulito
+    for i in range(2, total_rows + 1):
+        fig.update_xaxes(showticklabels=False, row=i, col=1)
+        fig.update_yaxes(showgrid=True, zeroline=False, row=i, col=1) # Griglia anche per indicatori
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ---
+    st.subheader("Dati Tabulati degli Indicatori")
+    if calculated_indicators:
+        # Crea un DataFrame con tutti i dati necessari per la tabella
+        df_display_indicators = df_data[['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']].copy()
+        
+        for ind_name, series_or_df in calculated_indicators.items():
+            if isinstance(series_or_df, pd.Series):
+                df_display_indicators[f"{ind_name}"] = series_or_df
+            elif isinstance(series_or_df, pd.DataFrame):
+                # Per indicatori come lo Stocastico che restituiscono un DataFrame
+                # Renaming delle colonne per un display più pulito
+                for col_name in series_or_df.columns:
+                    # Esempio: 'STOCHk_14_3_3' diventa 'Stocastico_K'
+                    # Oppure, se hai rinominato in calculate_stochastic, usa il nome pulito
+                    if 'STOCHk' in col_name:
+                        df_display_indicators[f"Stocastico_%K"] = series_or_df[col_name]
+                    elif 'STOCHd' in col_name:
+                        df_display_indicators[f"Stocastico_%D"] = series_or_df[col_name]
+                    else: # fallback per altri casi
+                        df_display_indicators[f"{ind_name}_{col_name.split('_')[0]}"] = series_or_df[col_name]
+        
+        df_display_indicators.index = df_display_indicators.index.strftime('%Y-%m-%d')
+        st.dataframe(df_display_indicators.tail(30).round(2)) # Mostra le ultime 30 righe per chiarezza
+    else:
+        st.info("Seleziona uno o più indicatori per visualizzare i loro dati tabulati.")
+
+else:
+    st.info("Seleziona un titolo e un intervallo di date, poi il grafico apparirà qui.")
+
+----------------------------------------------------------------------------------------------
+
+# Borsa2_app/utils/calcolo_indicatori/__init__.py
+
+from .sma import calculate_sma
+from .ema import calculate_ema
+from .rsi import calculate_rsi
+from .stocastico import calculate_stochastic # Aggiunto
+from .bollinger import calculate_bollinger_bands
+
+
+-------------------------------------------------------------------------------------------------
+
+# Borsa2_app/utils/calcolo_indicatori/bollinger.py
+
+import pandas as pd
+import pandas_ta as ta
+
+def calculate_bollinger_bands(data: pd.Series, length: int = 20, std: int = 2) -> pd.DataFrame:
+    """
+    Calcola le Bande di Bollinger (BBANDS) usando pandas_ta.
+
+    Args:
+        data (pd.Series): Serie di dati (solitamente prezzi di chiusura).
+        length (int): Periodo per il calcolo della media mobile centrale (default: 20).
+        std (int): Numero di deviazioni standard per le bande superiore e inferiore (default: 2).
+
+    Returns:
+        pd.DataFrame: DataFrame contenente le serie della banda inferiore, centrale e superiore.
+                      Le colonne saranno nominate es. 'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0'.
+    """
+    if not isinstance(data, pd.Series):
+        raise TypeError("Input 'data' must be a pandas Series.")
+    if not isinstance(length, int) or length <= 0:
+        raise ValueError("Input 'length' must be a positive integer.")
+    if not isinstance(std, (int, float)) or std <= 0:
+        raise ValueError("Input 'std' must be a positive number.")
+
+    # pandas_ta restituisce un DataFrame per gli indicatori multi-output
+    # Le colonne di default saranno tipo BBL_20_2.0, BBM_20_2.0, BBU_20_2.0
+    bbands_data = ta.bbands(close=data, length=length, std=std, append=False)
+
+    # Rinomina le colonne per facilitare l'accesso e la visualizzazione
+    # Trova i nomi generati da pandas_ta per le bande inferiore, media e superiore
+    lower_band_col = [col for col in bbands_data.columns if 'BBL_' in col][0]
+    mid_band_col = [col for col in bbands_data.columns if 'BBM_' in col][0]
+    upper_band_col = [col for col in bbands_data.columns if 'BBU_' in col][0]
+
+    # Rinomina per chiarezza
+    bbands_data = bbands_data.rename(columns={
+        lower_band_col: f"BB_Lower_{length}_{std}",
+        mid_band_col: f"BB_Middle_{length}_{std}",
+        upper_band_col: f"BB_Upper_{length}_{std}"
+    })
+
+    return bbands_data
+---------------------------------------------------------------------------------------------------
+
+
+# Borsa2_app/utils/calcolo_indicatori/ema.py
+
+import pandas as pd
+import pandas_ta as ta
+
+def calculate_ema(data: pd.Series, period: int) -> pd.Series:
+    """
+    Calcola l'Exponential Moving Average (EMA) usando pandas_ta.
+
+    Args:
+        data (pd.Series): Serie di dati (solitamente prezzi di chiusura).
+        period (int): Periodo per il calcolo dell'EMA.
+
+    Returns:
+        pd.Series: Serie contenente i valori dell'EMA.
+    """
+    if not isinstance(data, pd.Series):
+        raise TypeError("Input 'data' must be a pandas Series.")
+    if not isinstance(period, int) or period <= 0:
+        raise ValueError("Input 'period' must be a positive integer.")
+
+    return ta.ema(data, length=period)
+
+
+
+------------------------------------------------------------------------------------------
+
+# Borsa2_app/utils/calcolo_indicatori/rsi.py
+
+import pandas as pd
+import pandas_ta as ta
+
+def calculate_rsi(data: pd.Series, period: int) -> pd.Series:
+    """
+    Calcola il Relative Strength Index (RSI) usando pandas_ta.
+
+    Args:
+        data (pd.Series): Serie di dati (solitamente prezzi di chiusura).
+        period (int): Periodo per il calcolo dell'RSI.
+
+    Returns:
+        pd.Series: Serie contenente i valori dell'RSI.
+    """
+    if not isinstance(data, pd.Series):
+        raise TypeError("Input 'data' must be a pandas Series.")
+    if not isinstance(period, int) or period <= 0:
+        raise ValueError("Input 'period' must be a positive integer.")
+
+    return ta.rsi(data, length=period)
+
+
+-------------------------------------------------------------------------------------
+
+# Borsa2_app/utils/calcolo_indicatori/sma.py
+
+import pandas as pd
+import pandas_ta as ta
+
+def calculate_sma(data: pd.Series, period: int) -> pd.Series:
+    """
+    Calcola la Simple Moving Average (SMA) usando pandas_ta.
+
+    Args:
+        data (pd.Series): Serie di dati (solitamente prezzi di chiusura).
+        period (int): Periodo per il calcolo della SMA.
+
+    Returns:
+        pd.Series: Serie contenente i valori della SMA.
+    """
+    if not isinstance(data, pd.Series):
+        raise TypeError("Input 'data' must be a pandas Series.")
+    if not isinstance(period, int) or period <= 0:
+        raise ValueError("Input 'period' must be a positive integer.")
+
+    # pandas_ta aggiunge l'indicatore direttamente al DataFrame/Series
+    # e lo restituisce.
+    # df.ta.sma(close=data, length=period) sarebbe se avessi un DataFrame
+    # con una colonna 'close'. Qui passiamo direttamente la Series.
+    return ta.sma(data, length=period)
+
+---------------------------------------------------------------------------------------------
+
+# Borsa2_app/utils/calcolo_indicatori/stocastico.py
+
+import pandas as pd
+import pandas_ta as ta
+
+def calculate_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int, d_period: int) -> pd.DataFrame:
+    """
+    Calcola l'Oscillatore Stocastico (%K e %D) usando pandas_ta.
+
+    Args:
+        high (pd.Series): Serie dei prezzi massimi.
+        low (pd.Series): Serie dei prezzi minimi.
+        close (pd.Series): Serie dei prezzi di chiusura.
+        k_period (int): Periodo per il calcolo di %K.
+        d_period (int): Periodo per il calcolo di %D (SMA di %K).
+
+    Returns:
+        pd.DataFrame: DataFrame contenente le serie %K e %D.
+                      Le colonne saranno nominate es. 'STOCHk_14_3_3' e 'STOCHd_14_3_3'.
+    """
+    if not all(isinstance(s, pd.Series) for s in [high, low, close]):
+        raise TypeError("Inputs high, low, close must be pandas Series.")
+    if not all(isinstance(p, int) and p > 0 for p in [k_period, d_period]):
+        raise ValueError("Inputs k_period and d_period must be positive integers.")
+
+    # pandas_ta restituisce un DataFrame per gli indicatori multi-output
+    stoch_data = ta.stoch(high=high, low=low, close=close, k=k_period, d=d_period, append=False)
+    # Rinomina le colonne per facilitare l'accesso in Streamlit
+    # Le colonne di default sono tipo STOCHk_14_3_3 e STOCHd_14_3_3.
+    # Le semplifichiamo a %K e %D o simili per il plotting e la tabella.
+    # Troviamo i nomi generati da pandas_ta
+    k_col = [col for col in stoch_data.columns if 'STOCHk' in col][0]
+    d_col = [col for col in stoch_data.columns if 'STOCHd' in col][0]
+
+    stoch_data = stoch_data.rename(columns={k_col: f"Stoch_%K_{k_period}_{d_period}", d_col: f"Stoch_%D_{k_period}_{d_period}"})
+    return stoch_data
+
+-------------------------------------------------------------------------------------------
+
+
+# Borsa2_app/utils/importazione_dati.py
+
+import pandas as pd
+import yfinance as yf
+import datetime
+import streamlit as st # Useremo st.cache_data per ottimizzare
+
+def load_tickers_from_csv(file_path="tickers.csv"):
+    """
+    Carica i simboli dei ticker e i nomi delle aziende da un file CSV.
+    Il CSV dovrebbe avere le colonne 'Symbol' e 'Company'.
+    Ritorna un DataFrame con i ticker e i nomi, o None in caso di errore.
+    """
+    try:
+        # Assumiamo che il file tickers.csv sia nella root del progetto (Borsa2_app)
+        df_tickers = pd.read_csv(file_path)
+        if 'Symbol' not in df_tickers.columns:
+            st.error(f"Il file '{file_path}' deve contenere una colonna 'Symbol'.")
+            return None
+        return df_tickers
+    except FileNotFoundError:
+        st.error(f"Errore: Il file '{file_path}' non è stato trovato nella directory principale del progetto.")
+        return None
+    except Exception as e:
+        st.error(f"Errore durante la lettura del file '{file_path}': {e}")
+        return None
+
+@st.cache_data(ttl=3600) # Memorizza in cache i dati per 1 ora (3600 secondi)
+def download_stock_data(ticker_symbol: str, start_date: datetime.date, end_date: datetime.date):
+    """
+    Scarica i dati storici di un singolo titolo azionario utilizzando yfinance.
+    I dati vengono memorizzati in cache per velocizzare le richieste ripetute.
+
+    Args:
+        ticker_symbol (str): Il simbolo del titolo azionario (es. 'AAPL').
+        start_date (datetime.date): La data di inizio per i dati.
+        end_date (datetime.date): La data di fine per i dati.
+
+    Returns:
+        pd.DataFrame: Un DataFrame di Pandas con i dati OHLCV, o None in caso di errore.
+    """
+    if not isinstance(ticker_symbol, str) or not ticker_symbol:
+        st.warning("Simbolo del titolo non valido fornito per il download.")
+        return None
+    if not isinstance(start_date, datetime.date) or not isinstance(end_date, datetime.date):
+        st.warning("Date non valide fornite per il download.")
+        return None
+    if start_date >= end_date:
+        st.warning("La data di inizio deve essere precedente alla data di fine.")
+        return None
+
+    try:
+        data = yf.download(ticker_symbol, start=start_date, end=end_date)
+        if data.empty:
+            st.warning(f"Nessun dato trovato per il simbolo: {ticker_symbol} nel periodo specificato ({start_date} a {end_date}).")
+            return None
+        return data
+    except Exception as e:
+        st.error(f"Errore durante il download dei dati per {ticker_symbol} da Yahoo Finance: {e}")
+        return None
+
+# Funzione per ottenere la lista dei simboli e nomi per la selezione in Streamlit
+def get_ticker_list_for_selection(file_path="tickers.csv"):
+    """
+    Prepara una lista di stringhe formattate "Symbol - Company Name" per la selezione utente.
+    """
+    df_tickers = load_tickers_from_csv(file_path)
+    if df_tickers is not None and not df_tickers.empty:
+        # Combina Symbol e Company per una visualizzazione più chiara nel selectbox
+        df_tickers['Display'] = df_tickers['Symbol'] + ' - ' + df_tickers['Company']
+        return df_tickers['Display'].tolist()
+    return []
+
+def extract_symbol_from_selection(selected_string: str):
+    """
+    Estrae il simbolo del ticker da una stringa formattata "Symbol - Company Name".
+    """
+    if selected_string and ' - ' in selected_string:
+        return selected_string.split(' - ')[0].strip()
+    return selected_string.strip() # Ritorna la stringa così com'è se il formato non corrisponde
+
+------------------------------------------------------------------------------------------------
+
+#Homepage
+import streamlit as st
+
+st.set_page_config(
+    page_title="Borsa2_app - Home",
+    layout="wide"
+)
+
+st.title("Benvenuto nella Borsa2_app")
+st.write("Questa piattaforma ti permette di scaricare i dati e vedere indicatori.")
+
+st.markdown("""
+Utilizza il menu a sinistra  
+""")
+
+-------------------------------------------------------------------------------------------
+
+# squeeze_pro.py
+
+import numpy as np
+from pandas import DataFrame
+from pandas_ta.momentum import mom
+from pandas_ta.overlap import ema, sma
+from pandas_ta.trend import decreasing, increasing
+from pandas_ta.volatility import bbands, kc
+from pandas_ta.utils import get_offset
+from pandas_ta.utils import unsigned_differences, verify_series
+
+
+def squeeze_pro(high, low, close, bb_length=None, bb_std=None, kc_length=None, kc_scalar_wide=None, kc_scalar_normal=None, kc_scalar_narrow=None, mom_length=None, mom_smooth=None, use_tr=None, mamode=None, offset=None, **kwargs):
+    """Indicator: Squeeze Momentum (SQZ) PRO"""
+    # Validate arguments
+    bb_length = int(bb_length) if bb_length and bb_length > 0 else 20
+    bb_std = float(bb_std) if bb_std and bb_std > 0 else 2.0
+    kc_length = int(kc_length) if kc_length and kc_length > 0 else 20
+    kc_scalar_wide = float(kc_scalar_wide) if kc_scalar_wide and kc_scalar_wide > 0 else 2
+    kc_scalar_normal = float(kc_scalar_normal) if kc_scalar_normal and kc_scalar_normal > 0 else 1.5
+    kc_scalar_narrow = float(kc_scalar_narrow) if kc_scalar_narrow and kc_scalar_narrow > 0 else 1
+    mom_length = int(mom_length) if mom_length and mom_length > 0 else 12
+    mom_smooth = int(mom_smooth) if mom_smooth and mom_smooth > 0 else 6
+
+    _length = max(bb_length, kc_length, mom_length, mom_smooth)
+    high = verify_series(high, _length)
+    low = verify_series(low, _length)
+    close = verify_series(close, _length)
+    offset = get_offset(offset)
+
+    valid_kc_scaler = kc_scalar_wide > kc_scalar_normal and kc_scalar_normal > kc_scalar_narrow
+
+    if not valid_kc_scaler: return
+    if high is None or low is None or close is None: return
+
+    use_tr = kwargs.setdefault("tr", True)
+    asint = kwargs.pop("asint", True)
+    detailed = kwargs.pop("detailed", False)
+    mamode = mamode if isinstance(mamode, str) else "sma"
+
+    def simplify_columns(df, n=3):
+        df.columns = df.columns.str.lower()
+        return [c.split("_")[0][n - 1:n] for c in df.columns]
+
+    # Calculate Result
+    bbd = bbands(close, length=bb_length, std=bb_std, mamode=mamode)
+    kch_wide = kc(high, low, close, length=kc_length, scalar=kc_scalar_wide, mamode=mamode, tr=use_tr)
+    kch_normal = kc(high, low, close, length=kc_length, scalar=kc_scalar_normal, mamode=mamode, tr=use_tr)
+    kch_narrow = kc(high, low, close, length=kc_length, scalar=kc_scalar_narrow, mamode=mamode, tr=use_tr)
+
+    # Simplify KC and BBAND column names for dynamic access
+    bbd.columns = simplify_columns(bbd)
+    kch_wide.columns = simplify_columns(kch_wide)
+    kch_normal.columns = simplify_columns(kch_normal)
+    kch_narrow.columns = simplify_columns(kch_narrow)
+
+    momo = mom(close, length=mom_length)
+    if mamode.lower() == "ema":
+        squeeze = ema(momo, length=mom_smooth)
+    else: # "sma"
+        squeeze = sma(momo, length=mom_smooth)
+
+    # Classify Squeezes
+    squeeze_on_wide = (bbd.l > kch_wide.l) & (bbd.u < kch_wide.u)
+    squeeze_on_normal = (bbd.l > kch_normal.l) & (bbd.u < kch_normal.u)
+    squeeze_on_narrow = (bbd.l > kch_narrow.l) & (bbd.u < kch_narrow.u)
+    squeeze_off_wide = (bbd.l < kch_wide.l) & (bbd.u > kch_wide.u)
+    no_squeeze = ~squeeze_on_wide & ~squeeze_off_wide
+
+    # Offset
+    if offset != 0:
+        squeeze = squeeze.shift(offset)
+        squeeze_on_wide = squeeze_on_wide.shift(offset)
+        squeeze_on_normal = squeeze_on_normal.shift(offset)
+        squeeze_on_narrow = squeeze_on_narrow.shift(offset)
+        squeeze_off_wide = squeeze_off_wide.shift(offset)
+        no_squeeze = no_squeeze.shift(offset)
+
+    # Handle fills
+    if "fillna" in kwargs:
+        squeeze.fillna(kwargs["fillna"], inplace=True)
+        squeeze_on_wide.fillna(kwargs["fillna"], inplace=True)
+        squeeze_on_normal.fillna(kwargs["fillna"], inplace=True)
+        squeeze_on_narrow.fillna(kwargs["fillna"], inplace=True)
+        squeeze_off_wide.fillna(kwargs["fillna"], inplace=True)
+        no_squeeze.fillna(kwargs["fillna"], inplace=True)
+    if "fill_method" in kwargs:
+        squeeze.fillna(method=kwargs["fill_method"], inplace=True)
+        squeeze_on_wide.fillna(method=kwargs["fill_method"], inplace=True)
+        squeeze_on_normal.fillna(method=kwargs["fill_method"], inplace=True)
+        squeeze_on_narrow.fillna(method=kwargs["fill_method"], inplace=True)
+        squeeze_off_wide.fillna(method=kwargs["fill_method"], inplace=True)
+        no_squeeze.fillna(method=kwargs["fill_method"], inplace=True)
+
+    # Name and Categorize it
+    _props = "" if use_tr else "hlr"
+    _props += f"_{bb_length}_{bb_std}_{kc_length}_{kc_scalar_wide}_{kc_scalar_normal}_{kc_scalar_narrow}"
+    squeeze.name = f"SQZPRO{_props}"
+
+    data = {
+        squeeze.name: squeeze,
+        f"SQZPRO_ON_WIDE": squeeze_on_wide.astype(int) if asint else squeeze_on_wide,
+        f"SQZPRO_ON_NORMAL": squeeze_on_normal.astype(int) if asint else squeeze_on_normal,
+        f"SQZPRO_ON_NARROW": squeeze_on_narrow.astype(int) if asint else squeeze_on_narrow,
+        f"SQZPRO_OFF": squeeze_off_wide.astype(int) if asint else squeeze_off_wide,
+        f"SQZPRO_NO": no_squeeze.astype(int) if asint else no_squeeze,
+    }
+    df = DataFrame(data)
+    df.name = squeeze.name
+    df.category = squeeze.category = "momentum"
+
+    # Detailed Squeeze Series
+    if detailed:
+        pos_squeeze = squeeze[squeeze >= 0]
+        neg_squeeze = squeeze[squeeze < 0]
+
+        pos_inc, pos_dec = unsigned_differences(pos_squeeze, asint=True)
+        neg_inc, neg_dec = unsigned_differences(neg_squeeze, asint=True)
+
+        pos_inc *= squeeze
+        pos_dec *= squeeze
+        neg_dec *= squeeze
+        neg_inc *= squeeze
+
+        pos_inc.replace(0, npNaN, inplace=True)
+        pos_dec.replace(0, npNaN, inplace=True)
+        neg_dec.replace(0, npNaN, inplace=True)
+        neg_inc.replace(0, npNaN, inplace=True)
+
+        sqz_inc = squeeze * increasing(squeeze)
+        sqz_dec = squeeze * decreasing(squeeze)
+        sqz_inc.replace(0, npNaN, inplace=True)
+        sqz_dec.replace(0, npNaN, inplace=True)
+
+        # Handle fills
+        if "fillna" in kwargs:
+            sqz_inc.fillna(kwargs["fillna"], inplace=True)
+            sqz_dec.fillna(kwargs["fillna"], inplace=True)
+            pos_inc.fillna(kwargs["fillna"], inplace=True)
+            pos_dec.fillna(kwargs["fillna"], inplace=True)
+            neg_dec.fillna(kwargs["fillna"], inplace=True)
+            neg_inc.fillna(kwargs["fillna"], inplace=True)
+        if "fill_method" in kwargs:
+            sqz_inc.fillna(method=kwargs["fill_method"], inplace=True)
+            sqz_dec.fillna(method=kwargs["fill_method"], inplace=True)
+            pos_inc.fillna(method=kwargs["fill_method"], inplace=True)
+            pos_dec.fillna(method=kwargs["fill_method"], inplace=True)
+            neg_dec.fillna(method=kwargs["fill_method"], inplace=True)
+            neg_inc.fillna(method=kwargs["fill_method"], inplace=True)
+
+        df[f"SQZPRO_INC"] = sqz_inc
+        df[f"SQZPRO_DEC"] = sqz_dec
+        df[f"SQZPRO_PINC"] = pos_inc
+        df[f"SQZPRO_PDEC"] = pos_dec
+        df[f"SQZPRO_NDEC"] = neg_dec
+        df[f"SQZPRO_NINC"] = neg_inc
+
+    return df
+
+
+squeeze_pro.__doc__ = \
+"""Squeeze PRO(SQZPRO)
+
+This indicator is an extended version of "TTM Squeeze" from John Carter.
+The default is based on John Carter's "TTM Squeeze" indicator, as discussed
+in his book "Mastering the Trade" (chapter 11). The Squeeze indicator attempts
+to capture the relationship between two studies: Bollinger Bands® and Keltner's
+Channels. When the volatility increases, so does the distance between the bands,
+conversely, when the volatility declines, the distance also decreases. It finds
+sections of the Bollinger Bands® study which fall inside the Keltner's Channels.
+
+Sources:
+    https://usethinkscript.com/threads/john-carters-squeeze-pro-indicator-for-thinkorswim-free.4021/
+    https://www.tradingview.com/script/TAAt6eRX-Squeeze-PRO-Indicator-Makit0/
+
+Calculation:
+    Default Inputs:
+        bb_length=20, bb_std=2, kc_length=20, kc_scalar_wide=2,
+        kc_scalar_normal=1.5, kc_scalar_narrow=1, mom_length=12,
+        mom_smooth=6, tr=True,
+    BB = Bollinger Bands
+    KC = Keltner Channels
+    MOM = Momentum
+    SMA = Simple Moving Average
+    EMA = Exponential Moving Average
+    TR = True Range
+
+    RANGE = TR(high, low, close) if using_tr else high - low
+    BB_LOW, BB_MID, BB_HIGH = BB(close, bb_length, std=bb_std)
+    KC_LOW_WIDE, KC_MID_WIDE, KC_HIGH_WIDE = KC(high, low, close, kc_length, kc_scalar_wide, TR)
+    KC_LOW_NORMAL, KC_MID_NORMAL, KC_HIGH_NORMAL = KC(high, low, close, kc_length, kc_scalar_normal, TR)
+    KC_LOW_NARROW, KC_MID_NARROW, KC_HIGH_NARROW = KC(high, low, close, kc_length, kc_scalar_narrow, TR)
+
+    MOMO = MOM(close, mom_length)
+    if mamode == "ema":
+        SQZPRO = EMA(MOMO, mom_smooth)
+    else:
+        SQZPRO = EMA(momo, mom_smooth)
+
+    SQZPRO_ON_WIDE  = (BB_LOW > KC_LOW_WIDE) and (BB_HIGH < KC_HIGH_WIDE)
+    SQZPRO_ON_NORMAL  = (BB_LOW > KC_LOW_NORMAL) and (BB_HIGH < KC_HIGH_NORMAL)
+    SQZPRO_ON_NARROW  = (BB_LOW > KC_LOW_NARROW) and (BB_HIGH < KC_HIGH_NARROW)
+    SQZPRO_OFF_WIDE = (BB_LOW < KC_LOW_WIDE) and (BB_HIGH > KC_HIGH_WIDE)
+    SQZPRO_NO = !SQZ_ON_WIDE and !SQZ_OFF_WIDE
+
+Args:
+    high (pd.Series): Series of 'high's
+    low (pd.Series): Series of 'low's
+    close (pd.Series): Series of 'close's
+    bb_length (int): Bollinger Bands period. Default: 20
+    bb_std (float): Bollinger Bands Std. Dev. Default: 2
+    kc_length (int): Keltner Channel period. Default: 20
+    kc_scalar_wide (float): Keltner Channel scalar for wider channel. Default: 2
+    kc_scalar_normal (float): Keltner Channel scalar for normal channel. Default: 1.5
+    kc_scalar_narrow (float): Keltner Channel scalar for narrow channel. Default: 1
+    mom_length (int): Momentum Period. Default: 12
+    mom_smooth (int): Smoothing Period of Momentum. Default: 6
+    mamode (str): Only "ema" or "sma". Default: "sma"
+    offset (int): How many periods to offset the result. Default: 0
+
+Kwargs:
+    tr (value, optional): Use True Range for Keltner Channels. Default: True
+    asint (value, optional): Use integers instead of bool. Default: True
+    mamode (value, optional): Which MA to use. Default: "sma"
+    detailed (value, optional): Return additional variations of SQZ for
+        visualization. Default: False
+    fillna (value, optional): pd.DataFrame.fillna(value)
+    fill_method (value, optional): Type of fill method
+
+Returns:
+    pd.DataFrame: SQZPRO, SQZPRO_ON_WIDE, SQZPRO_ON_NORMAL, SQZPRO_ON_NARROW, SQZPRO_OFF_WIDE, SQZPRO_NO columns by default. More
+        detailed columns if 'detailed' kwarg is True.
+"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
