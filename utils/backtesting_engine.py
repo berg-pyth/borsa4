@@ -180,16 +180,21 @@ def run_backtest(
                     # Aggiorna il prezzo più alto raggiunto
                     if current_high > trailing_stop_highest_price:
                         trailing_stop_highest_price = current_high
-                        # Calcola il nuovo livello di trailing stop
-                        trailing_stop = trailing_stop_highest_price * (1 - trailing_stop_percent / 100)
+                    # Calcola sempre il livello di trailing stop basato sul massimo corrente
+                    trailing_stop = trailing_stop_highest_price * (1 - trailing_stop_percent / 100)
                 
-                # Verifica le condizioni di uscita
+                # Verifica le condizioni di uscita con logica intraday
                 if trailing_stop is not None and current_low <= trailing_stop:
-                    exit_reason = f"SELL (Trailing Stop a {trailing_stop:.2f})"
+                    # Logica intraday: se close > open, massimo raggiunto dopo minimo
+                    if current_close <= current_open:  # Massimo PRIMA del minimo
+                        exit_reason = f"SELL (Trailing Stop a {trailing_stop:.2f})"
+                        exit_price = trailing_stop
                 elif fixed_stop_loss is not None and current_low <= fixed_stop_loss:
                     exit_reason = f"SELL (Stop Loss a {fixed_stop_loss:.2f})"
+                    exit_price = fixed_stop_loss
                 elif take_profit_price is not None and current_high >= take_profit_price:
                     exit_reason = f"SELL (Take Profit a {take_profit_price:.2f})"
+                    exit_price = take_profit_price
             
             elif shares_held < 0:  # Posizione SHORT
                 # Mantieni separati i livelli di stop loss fisso e trailing stop
@@ -205,29 +210,36 @@ def run_backtest(
                     # Aggiorna il prezzo più basso raggiunto
                     if current_low < trailing_stop_lowest_price:
                         trailing_stop_lowest_price = current_low
-                        # Calcola il nuovo livello di trailing stop
-                        trailing_stop = trailing_stop_lowest_price * (1 + trailing_stop_percent / 100)
+                    # Calcola sempre il livello di trailing stop basato sul minimo corrente
+                    trailing_stop = trailing_stop_lowest_price * (1 + trailing_stop_percent / 100)
                 
-                # Verifica le condizioni di uscita
+                # Verifica le condizioni di uscita con logica intraday
                 if trailing_stop is not None and current_high >= trailing_stop:
-                    exit_reason = f"COVER (Trailing Stop a {trailing_stop:.2f})"
+                    # Logica intraday: se close < open, minimo raggiunto dopo massimo
+                    if current_close >= current_open:  # Minimo PRIMA del massimo
+                        exit_reason = f"COVER (Trailing Stop a {trailing_stop:.2f})"
+                        exit_price = trailing_stop
                 elif fixed_stop_loss is not None and current_high >= fixed_stop_loss:
                     exit_reason = f"COVER (Stop Loss a {fixed_stop_loss:.2f})"
+                    exit_price = fixed_stop_loss
                 elif take_profit_price is not None and current_low <= take_profit_price:
                     exit_reason = f"COVER (Take Profit a {take_profit_price:.2f})"
+                    exit_price = take_profit_price
             
             # Esegui l'uscita se è stato attivato uno stop
             if exit_reason:
                 if shares_held > 0:  # Chiudi posizione LONG
-                    revenue = shares_held * current_close * (1 - commissione_percentuale / 100)
-                    commission = (shares_held * current_close * commissione_percentuale) / 100
-                    profit_loss = revenue - (shares_held * entry_price)
+                    actual_exit_price = exit_price if 'exit_price' in locals() else current_close
+                    revenue = shares_held * actual_exit_price * (1 - commissione_percentuale / 100)
+                    commission = (shares_held * actual_exit_price * commissione_percentuale) / 100
+                    cost_original = shares_held * entry_price * (1 + commissione_percentuale / 100)
+                    profit_loss = revenue - cost_original
                     capital_available += revenue
                     
                     trade_log.append({
                         'Data': index.date(),
                         'Tipo': exit_reason,
-                        'Prezzo': current_close,
+                        'Prezzo': actual_exit_price,
                         'Quantità': shares_held,
                         'Ricavo': revenue,
                         'Comm. (€)': commission,
@@ -235,14 +247,15 @@ def run_backtest(
                         'Equity (€)': current_equity
                     })
                 else:  # Chiudi posizione SHORT
-                    cost_to_close = abs(shares_held) * current_close * (1 + commissione_percentuale / 100)
-                    commission = (abs(shares_held) * current_close * commissione_percentuale) / 100
-                    profit_loss = (abs(shares_held) * entry_price) - (abs(shares_held) * current_close)
+                    actual_exit_price = exit_price if 'exit_price' in locals() else current_close
+                    cost_to_close = abs(shares_held) * actual_exit_price * (1 + commissione_percentuale / 100)
+                    commission = (abs(shares_held) * actual_exit_price * commissione_percentuale) / 100
+                    profit_loss = (abs(shares_held) * entry_price) - (abs(shares_held) * actual_exit_price)
                     
                     trade_log.append({
                         'Data': index.date(),
                         'Tipo': exit_reason,
-                        'Prezzo': current_close,
+                        'Prezzo': actual_exit_price,
                         'Quantità': abs(shares_held),
                         'Costo Chiusura Short': cost_to_close,
                         'Comm. (€)': commission,
@@ -265,7 +278,8 @@ def run_backtest(
                 if shares_held > 0:  # Chiudi posizione LONG
                     revenue = shares_held * current_close * (1 - commissione_percentuale / 100)
                     commission = (shares_held * current_close * commissione_percentuale) / 100
-                    profit_loss = revenue - (shares_held * entry_price)
+                    cost_original = shares_held * entry_price * (1 + commissione_percentuale / 100)
+                    profit_loss = revenue - cost_original
                     capital_available += revenue
                     
                     trade_log.append({
@@ -368,7 +382,8 @@ def run_backtest(
             if shares_held > 0: # Posizione LONG aperta
                 revenue_final = shares_held * final_price * (1 - commissione_percentuale / 100)
                 commission_final = (shares_held * final_price * commissione_percentuale) / 100
-                profit_loss_final = revenue_final - (shares_held * entry_price)
+                cost_original_final = shares_held * entry_price * (1 + commissione_percentuale / 100)
+                profit_loss_final = revenue_final - cost_original_final
                 
                 capital_available += revenue_final
 
@@ -520,6 +535,7 @@ def run_backtest(
 
     # Calcola il profitto/perdita medio annuale
     total_days = (pd.to_datetime(dati.index[-1]) - pd.to_datetime(dati.index[0])).days
+    trading_days = len(dati)  # Giorni di trading effettivi
     annualized_return = (total_pnl / capitale_iniziale) * (365 / total_days) * 100 if capitale_iniziale != 0 and total_days > 0 else 0
 
     # Calcolo del Max Drawdown
@@ -566,6 +582,7 @@ def run_backtest(
         'Capitale Finale (€)': round(current_equity, 2),
         'Profitto/Perdita Totale (€)': round(total_pnl, 2),
         'Profitto/Perdita Totale (%)': round(total_pnl_percent, 2),
+        'Giorni Totali': total_days,
         'Rendimento Medio Annuale (%)': round(annualized_return, 2),
         'Numero Totale di Trade': total_trades,
         'Num. Trade Vincenti': num_winning_trades,

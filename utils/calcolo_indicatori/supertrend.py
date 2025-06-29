@@ -1,6 +1,8 @@
 # Borsa2_app/utils/calcolo_indicatori/supertrend.py
 
+from ..numpy_compat import *
 import pandas as pd
+import numpy as np
 import pandas_ta as ta
 
 def calculate_supertrend(high, low, close, period=10, multiplier=3.0):
@@ -52,13 +54,8 @@ def calculate_supertrend(high, low, close, period=10, multiplier=3.0):
         })
         
         # Crea le linee separate per trend rialzista e ribassista
-        for i in range(len(result)):
-            if result['trend'].iloc[i] == 1:  # Trend rialzista
-                result['up_trend'].iloc[i] = result['supertrend'].iloc[i]
-                result['down_trend'].iloc[i] = None
-            else:  # Trend ribassista
-                result['up_trend'].iloc[i] = None
-                result['down_trend'].iloc[i] = result['supertrend'].iloc[i]
+        result.loc[result['trend'] == 1, 'up_trend'] = result.loc[result['trend'] == 1, 'supertrend']
+        result.loc[result['trend'] != 1, 'down_trend'] = result.loc[result['trend'] != 1, 'supertrend']
         
         return result
     else:

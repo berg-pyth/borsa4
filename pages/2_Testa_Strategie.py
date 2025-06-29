@@ -1,5 +1,10 @@
 # BorsaNew_app/pages/2_Testa_Strategie.py
 
+# Fix NumPy 2.0+ compatibility
+import numpy as np
+if not hasattr(np, 'NaN'):
+    np.NaN = np.nan
+
 import streamlit as st
 import pandas as pd
 import datetime
@@ -311,14 +316,22 @@ if run_button:
                                 
                                 # Crea il dizionario delle metriche nell'ordine richiesto
                                 metriche_risultati = {
+                                    'Nome del Titolo': selected_ticker_display,
                                     'Nome della Strategia': selected_strategy_name,
                                     'Data Iniziale del Test': start_date.strftime('%Y-%m-%d'),
                                     'Data Finale del Test': end_date.strftime('%Y-%m-%d'),
+                                    'Commissione (%)': commissione_percentuale,
+                                    'Abilita Short': 'Sì' if abilita_short else 'No',
+                                    'Importo Fisso per Trade (€)': investimento_fisso_per_trade if investimento_fisso_per_trade > 0 else 'N/A',
+                                    'Stop Loss (%)': stop_loss_percent if stop_loss_percent is not None else 'N/A',
+                                    'Take Profit (%)': take_profit_percent if take_profit_percent is not None else 'N/A',
+                                    'Trailing Stop (%)': trailing_stop_percent if trailing_stop_percent is not None else 'N/A',
                                     'Parametri della Strategia Testata': str(strategy_parameters),
                                     'Capitale Iniziale (€)': round(initial_capital, 2),
                                     'Capitale Finale (€)': round(metrics['Capitale Finale (€)'], 2),
-                                    'Profitto/Perdita Totale (€)': round(metrics['Profitto/Perdita Totale (€)'], 2),
-                                    'Profitto/Perdita Totale (%)': round(metrics['Profitto/Perdita Totale (%)'], 2),
+                                    'Profitto/Perdita Totale netto (€)': round(metrics['Profitto/Perdita Totale (€)'], 2),
+                                    'Profitto/Perdita Totale netto (%)': round(metrics['Profitto/Perdita Totale (%)'], 2),
+                                    'Giorni Totali': metrics.get('Giorni Totali', 0),
                                     'Rendimento Medio Annuale (%)': round(metrics['Rendimento Medio Annuale (%)'], 2),
                                     'Spese di Commissione Totali (€)': round(total_commission, 2),
                                     'Numero Totale di Trade': metrics['Numero Totale di Trade'],

@@ -1,0 +1,14 @@
+streamlit>=1.22.0
+pandas>=1.5.3
+numpy>=1.24.3,<2.0.0
+plotly>=5.14.1
+yfinance>=0.2.18
+scikit-learn>=1.2.2
+matplotlib>=3.7.1
+python-dateutil>=2.8.2
+pytz>=2023.3
+requests>=2.29.0
+ta>=0.10.2
+pandas-ta==0.3.14b0
+importlib-metadata>=4.0.0
+setuptools>=65.0.0

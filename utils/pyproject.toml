@@ -1,0 +1,6 @@
+[tool.python]
+version = "3.12.10"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

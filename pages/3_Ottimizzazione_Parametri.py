@@ -447,9 +447,30 @@ if st.session_state.optimization_done:
         # Mostra le metriche di performance
         st.subheader("Metriche di Performance con i Migliori Parametri")
         if st.session_state.best_metrics:
-            # Aggiungi informazioni sulla strategia e parametri all'inizio delle metriche
+            # Calcola metriche aggiuntive per l'ottimizzazione
+            total_commission_opt = sum(trade.get('Comm. (€)', 0) for trade in st.session_state.best_trades) if st.session_state.best_trades else 0
+            winning_trades_opt = len([t for t in st.session_state.best_trades if t.get('P/L (€)', 0) > 0]) if st.session_state.best_trades else 0
+            losing_trades_opt = len([t for t in st.session_state.best_trades if t.get('P/L (€)', 0) < 0]) if st.session_state.best_trades else 0
+            
+            # Calcola Profit Factor
+            gross_profit_opt = sum(t.get('P/L (€)', 0) for t in st.session_state.best_trades if t.get('P/L (€)', 0) > 0) if st.session_state.best_trades else 0
+            gross_loss_opt = abs(sum(t.get('P/L (€)', 0) for t in st.session_state.best_trades if t.get('P/L (€)', 0) < 0)) if st.session_state.best_trades else 0
+            profit_factor_opt = gross_profit_opt / gross_loss_opt if gross_loss_opt != 0 else float('inf')
+            
+            # Calcola Reward/Risk Ratio
+            avg_win_opt = gross_profit_opt / winning_trades_opt if winning_trades_opt > 0 else 0
+            avg_loss_opt = gross_loss_opt / losing_trades_opt if losing_trades_opt > 0 else 0
+            reward_risk_ratio_opt = avg_win_opt / avg_loss_opt if avg_loss_opt != 0 else float('inf')
+            
+            # Calcola Buy & Hold Return
+            buy_hold_return_opt = ((st.session_state.best_buy_hold_equity.iloc[-1] / capitale_iniziale) - 1) * 100 if not st.session_state.best_buy_hold_equity.empty else 0
+            
+            # Crea il dizionario delle metriche nell'ordine esatto richiesto
             metriche_complete = {
+                'Nome del Titolo': selected_ticker_display,
                 'Strategia': selected_strategy_name,
+                'Data Iniziale del Test': start_date.strftime('%Y-%m-%d'),
+                'Data Finale del Test': end_date.strftime('%Y-%m-%d'),
                 'Parametri Ottimali': str(st.session_state.best_params),
                 'Capitale Iniziale (€)': capitale_iniziale,
                 'Commissione (%)': commissione_percentuale,
@@ -457,11 +478,42 @@ if st.session_state.optimization_done:
                 'Importo Fisso per Trade (€)': investimento_fisso_per_trade if investimento_fisso_per_trade > 0 else 'N/A',
                 'Stop Loss (%)': stop_loss_percent if stop_loss_percent is not None else 'N/A',
                 'Take Profit (%)': take_profit_percent if take_profit_percent is not None else 'N/A',
-                'Trailing Stop (%)': trailing_stop_percent if trailing_stop_percent is not None else 'N/A'
+                'Trailing Stop (%)': trailing_stop_percent if trailing_stop_percent is not None else 'N/A',
+                'Capitale Finale (€)': st.session_state.best_metrics.get('Capitale Finale (€)', 0),
+                'Profitto/Perdita Totale (€)': st.session_state.best_metrics.get('Profitto/Perdita Totale (€)', 0),
+                'Profitto/Perdita Totale (%)': st.session_state.best_metrics.get('Profitto/Perdita Totale (%)', 0),
+                'Giorni Totali': st.session_state.best_metrics.get('Giorni Totali', 0),
+                'Rendimento Medio Annuale (%)': st.session_state.best_metrics.get('Rendimento Medio Annuale (%)', 0),
+                'Spese di Commissione Totali (€)': round(total_commission_opt, 2),
+                'Numero Totale di Trade': st.session_state.best_metrics.get('Numero Totale di Trade', 0),
+                'Num. Trade Vincenti': st.session_state.best_metrics.get('Num. Trade Vincenti', 0),
+                'Num. Trade Perdenti': st.session_state.best_metrics.get('Num. Trade Perdenti', 0),
+                'Percentuale Trade Vincenti': st.session_state.best_metrics.get('Percentuale Trade Vincenti', 0),
+                'Num. Trade Long': st.session_state.best_metrics.get('Num. Trade Long', 0),
+                'P/L Medio Trade Long (%)': st.session_state.best_metrics.get('P/L Medio Trade Long (%)', 0),
+                'Num. Trade Short': st.session_state.best_metrics.get('Num. Trade Short', 0),
+                'P/L Medio Trade Short (%)': st.session_state.best_metrics.get('P/L Medio Trade Short (%)', 0),
+                'Profitto Medio Trade Vincenti (€)': st.session_state.best_metrics.get('Profitto Medio Trade Vincenti (€)', 0),
+                'Profitto Medio Trade Vincenti (%)': st.session_state.best_metrics.get('Profitto Medio Trade Vincenti (%)', 0),
+                'Perdita Media Trade Perdenti (€)': st.session_state.best_metrics.get('Perdita Media Trade Perdenti (€)', 0),
+                'Perdita Media Trade Perdenti (%)': st.session_state.best_metrics.get('Perdita Media Trade Perdenti (%)', 0),
+                'Profitto Massimo Trade (€)': st.session_state.best_metrics.get('Profitto Massimo Trade (€)', 0),
+                'Profitto Massimo Trade (%)': st.session_state.best_metrics.get('Profitto Massimo Trade (%)', 0),
+                'Data Profitto Massimo': st.session_state.best_metrics.get('Data Profitto Massimo', 'N/A'),
+                'Perdita Massima Trade (€)': st.session_state.best_metrics.get('Perdita Massima Trade (€)', 0),
+                'Perdita Massima Trade (%)': st.session_state.best_metrics.get('Perdita Massima Trade (%)', 0),
+                'Data Perdita Massima': st.session_state.best_metrics.get('Data Perdita Massima', 'N/A'),
+                'Durata Media Trade (giorni)': st.session_state.best_metrics.get('Durata Media Trade (giorni)', 0),
+                'Max Drawdown (€)': st.session_state.best_metrics.get('Max Drawdown (€)', 0),
+                'Max Drawdown (%)': st.session_state.best_metrics.get('Max Drawdown (%)', 0),
+                'Ratio Sharpe': st.session_state.best_metrics.get('Ratio Sharpe', 0),
+                'Ratio Sortino': st.session_state.best_metrics.get('Ratio Sortino', 0),
+                'Ratio Calmar': st.session_state.best_metrics.get('Ratio Calmar', 0),
+                'Profit Factor': round(profit_factor_opt, 2),
+                'Reward/Risk Ratio': round(reward_risk_ratio_opt, 2),
+                'Buy & Hold Return (%)': round(buy_hold_return_opt, 2)
             }
-            
-            # Aggiungi le metriche di performance
-            metriche_complete.update(st.session_state.best_metrics)
+
             
             # Crea un dataframe con le metriche
             metrics_df = pd.DataFrame({

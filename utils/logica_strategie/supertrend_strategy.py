@@ -1,6 +1,8 @@
 # BorsaNew_app/utils/logica_strategie/supertrend_strategy.py
 
+from ..numpy_compat import *
 import pandas as pd
+import numpy as np
 import pandas_ta as ta
 
 class SupertrendStrategy:
